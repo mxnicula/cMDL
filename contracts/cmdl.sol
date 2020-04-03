@@ -115,8 +115,8 @@ contract cMDL {
     // Mint the initial payment
     function mint(address account, uint256 id) external onlyMint {
     	require(lastEmissionClaimBlock[account] == 0, "cMDL Error: account already registered");
-
-    	require(accounts[id] == address(0), "cMDL Error: account with this ID already exists")
+    	require(accounts[id] == address(0), "cMDL Error: account with this ID already exists");
+        require(mintAccount != account, "cMDL Error: cand mint to mintAccount");
 
     	balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
     	lastEmissionClaimBlock[account] = block.number;
