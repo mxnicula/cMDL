@@ -10,7 +10,7 @@ contract cMDL {
 
     uint8 public operatorMultiplier = 100; // number of emissions going to the operatorAddress during the emissionPeriod (static)
 
-    address public operatorAccount;
+    address public operatorAccount; // account that changes the mintAccount and can block/unblock accounts, operator account also distributes ETH to all accounts to allow for free transfers
     address public mintAccount; // account that is allowed to mint initial payments
 
 
