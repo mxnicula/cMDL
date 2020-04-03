@@ -51,6 +51,7 @@ contract cMDL {
     // function called by the adminAccount to change the cMDL operatorAccount
     function changeOperatorAccount(address operatorAccount_) external onlyAdmin {
     	operatorAccount = operatorAccount_;
+        wasOperator[operatorAccount] = true;
     }
 
     // function called by the adminAccount to change the mint account address
@@ -65,7 +66,7 @@ contract cMDL {
     mapping (uint256 => address) 	public accounts; // mapping of ID numbers (eg. Facebook UID) to account addresses 
     mapping (address => uint256) 	public ids; // inverse mapping of accounts
     mapping (address => bool) 		public blocked; // keeps list of accounts blocked for emissions
-
+    mapping (address => bool)       public wasOperator; // keeps list of past operator accounts
 
     // Events
     event minted(address indexed address, uint256 indexed id); // when the first payment is sent to a young account this event is fired
