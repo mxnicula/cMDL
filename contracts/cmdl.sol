@@ -75,6 +75,22 @@ contract cMDL {
 
     /** cMDL FUNCTIONS **/
 
+    // Constructor function, called once when deploying the contract
+    function constructor(
+        uint256 initialEmissionAmount, 
+        uint256 initialEmissionPeriod, 
+        address initialAdminAccount, 
+        address initialOperatorAccount, 
+        address initialMintAccount)
+    {
+        emissionAmount  = initialEmissionAmount;
+        emissionPeriod  = initialEmissionPeriod;
+
+        adminAccount    = initialAdminAccount;
+        operatorAccount = initialOperatorAccount;
+        mintAccount     = initialMintAccount;
+    }
+
     // Claim emission function called by the holder once each emission period
     function claimEmission() external public{
     	require(safeSub(block.number, lastEmissionClaimBlock[msg.sender]) > emissionPeriod, "cMDL Error: emission period hasn't passed yet");
