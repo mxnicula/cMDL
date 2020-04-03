@@ -182,13 +182,13 @@ contract cMDL {
     // Tax account is an account that can collect a share from every emission (up to 5% of the emission value)
     // The tax account can be further decentralized by making it a smart contract that can distribute the collected 
     // taxes further to other accounts that can also be smart contracts
-    uint256 public taxProportion; // the tax percentage deducted from each emission (1 = 1e18, 0.05 = 5e16 etc)
+    uint256 public taxProportion; // the tax proportion deducted from each emission (1 = 1e18, 0.05 = 5e16 etc)
     address public taxAccount; // the account collecting the tax
 
     event taxProportionChanged(uint256 newTaxPercent); // fired when the taxProportion is changed
     event taxAccountChanged(address newTaxAccount); // fired when the taxAccount is modified
 
-    // the function called by the adminAccount to change the cMDL emission parameters
+    // the function called by the adminAccount to change the tax proportion
     function changeTaxProportion(uint256 taxProportion_) external onlyAdmin {
         require(taxProportion < 5*1e16, "cMDL Error: taxPercent cannot be higher than 5%");
 
@@ -201,6 +201,44 @@ contract cMDL {
         taxAccount = taxAccount_;
 
         emit taxAccountChanged(taxAccount);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /** Transaction Fee Functionality **/
+    // Transaction fee account is the account receiving the transaction fee from each cMDL transfer
+    // This functionality is optional to mitigate network congestion that could lead to high network fees
+    // Can also be used to collect additional taxes from users
+    // Transaction fee is paid by the receiver
+    uint256 public txFee; // the transaction fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
+    address public txFeeAccount; // the account collecting the transaction fee
+
+    event txFeeChanged(uint256 newTxFee); // fired when the taxProportion is changed
+    event txFeeAccountChanged(address newTxFeeAccount); // fired when the taxAccount is modified
+
+    // the function called by the adminAccount to change the txFee
+    function changeTxFee(uint256 txFee_) external onlyAdmin {
+        require(txFee < 1*1e16, "cMDL Error: txFee cannot be higher than 1%");
+
+        txFee = txFee_;
+        emit txFeeChanged(txFee);
+    }
+
+    // the function called by the adminAccount to change the txFeeAccount
+    function changeTaxFeeAccount(address txFeeAccount_) external onlyAdmin {
+        txFeeAccount = txFeeAccount_;
+
+        emit txFeeAccountChanged(txFeeAccount);
     }
 
 
@@ -302,14 +340,18 @@ contract cMDL {
         // Check for overflows
         require(balanceOf[_to] + _value >= balanceOf[_to]);
         // Save this for an assertion in the future
-        uint previousBalances = balanceOf[_from] + balanceOf[_to];
+        uint previousBalances = balanceOf[_from] + balanceOf[_to] + balanceOf[txFeeAccount];
         // Subtract from the sender
         balanceOf[_from] -= _value;
-        // Add the same to the recipient
-        balanceOf[_to] += _value;
+
+        // Add the same to the recipient minus the txFee
+        uint256 feeAmount = safeMul(_value, txFee)/1e18;
+        balanceOf[_to] += safeSub(_value, feeAmount);
+        balanceOf[txFeeAccount] += feeAmount;
+
         emit Transfer(_from, _to, _value);
         // Asserts are used to use static analysis to find bugs in your code. They should never fail
-        assert(balanceOf[_from] + balanceOf[_to] == previousBalances);
+        assert(balanceOf[_from] + balanceOf[_to] + balanceOf[txFeeAccount] == previousBalances);
     }
 
     /**
@@ -394,6 +436,4 @@ contract cMDL {
         assert(c>=a && c>=b);
         return c;
     }
-
-    /****** END of Safe Math **/
 }
