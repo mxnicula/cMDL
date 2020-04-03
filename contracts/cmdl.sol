@@ -92,7 +92,7 @@ contract cMDL {
     }
 
     // Claim emission function called by the holder once each emission period
-    function claimEmission() external public{
+    function claimEmission() external public {
     	require(safeSub(block.number, lastEmissionClaimBlock[msg.sender]) > emissionPeriod, "cMDL Error: emission period hasn't passed yet");
 
     	require(lastEmissionClaimBlock[msg.sender] > 0, "cMDL Error: account not registered");
@@ -105,6 +105,7 @@ contract cMDL {
     	}
     	
     	lastEmissionClaimBlock[msg.sender] = block.number;
+        totalSupply = safeAdd(totalSupply, emissionAmount);
 
     	emit claimed(msg.sender, emissionAmount);
     	emit Transfer(address(0), msg.sender, emissionAmount);
@@ -121,6 +122,8 @@ contract cMDL {
 
     	accounts[id] = account;
     	ids[account] = id;
+
+        totalSupply = safeAdd(totalSupply, emissionAmount);
 
     	emit minted(account, id, emissionAmount);
     	emit Transfer(address(0), msg.sender, emissionAmount); 
