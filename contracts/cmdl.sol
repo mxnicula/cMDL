@@ -10,7 +10,10 @@ contract cMDL_v1 {
     uint256 public proposalFee; // fee paid to submit a votting proposal in order to change emission parameters
 
     uint8 public inactivityPeriods = 4; // number of claims missed before an account can be marked as inactive
-    
+
+    uint8 public operatorMultiplier = 10; // number of emissions going to the operatorAddress during the emissionPeriod (static)
+    uint8 public maxOperatorMultiplier = 1000; // maximum value for the operatorMultiplier
+
     address public operatorAccount; // account that changes the mintAccount and can block/unblock accounts, operator account also distributes Rinkeby ETH to all accounts to allow for free transfers
     address public mintAccount; // account that is allowed to mint initial payments
     
@@ -56,11 +59,18 @@ contract cMDL_v1 {
 
         uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
         uint256 netAmount = safeSub(emissionAmount, taxAmount);
-    	
-		balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
-        balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
 
-        emit Transfer(address(0), taxAccount, taxAmount);    	
+    	if (msg.sender != operatorAccount) {
+    		balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
+            balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
+
+            emit Transfer(address(0), taxAccount, taxAmount);
+    	} else {
+            balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], safeMul(netAmount, operatorMultiplier));
+    		balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], safeMul(taxAmount, operatorMultiplier));
+
+            emit Transfer(address(0), taxAccount, safeMul(taxAmount, operatorMultiplier));
+    	}
     	
     	lastEmissionClaimBlock[msg.sender] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
@@ -154,6 +164,7 @@ contract cMDL_v1 {
     event adminAccountChanged(address indexed newAdminAccount); // fired when mint account is changed
     event proposalFeeChanged(uint256 newProposalFee); // fired when the proposal fee is changed
     event chargedProposalFee(address indexed account, uint256 fee); // fired when a proposal fee is charged
+    event operatorMultiplierChanged()
 
     // the function called by the adminAccount to change the cMDL emission parameters
     function changeEmissionParameters(uint256 emissionAmount_, uint256 emissionPeriod_) external onlyAdmin returns (bool success) {
@@ -208,6 +219,16 @@ contract cMDL_v1 {
         proposalFee = proposalFee_;
 
         emit proposalFeeChanged(proposalFee_);
+        return true;
+    }
+
+    // function called by the adminAccount to change the proposal fee
+    function changeOperatorMultiplier(uint8 newOperatorMultiplier) external onlyAdmin returns (bool success)  {
+        require(newOperatorMultiplier < maxOperatorMultiplier && newOperatorMultiplier > 0, "cMDL Error: multiplier out of range" );
+
+        operatorMultiplier = newOperatorMultiplier;
+
+        emit operatorMultiplierChanged(operatorMultiplier);
         return true;
     }
 
