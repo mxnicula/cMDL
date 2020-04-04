@@ -10,8 +10,7 @@ contract cMDL_v1 {
     uint256 public proposalFee; // fee paid to submit a votting proposal in order to change emission parameters
 
     uint8 public inactivityPeriods = 4; // number of claims missed before an account can be marked as inactive
-    uint8 public operatorMultiplier = 100; // number of emissions going to the operatorAddress during the emissionPeriod (static)
-
+    
     address public operatorAccount; // account that changes the mintAccount and can block/unblock accounts, operator account also distributes Rinkeby ETH to all accounts to allow for free transfers
     address public mintAccount; // account that is allowed to mint initial payments
     
@@ -36,8 +35,10 @@ contract cMDL_v1 {
     mapping (address => uint256)    public ids; // inverse mapping of accounts
     mapping (address => bool)       public blocked; // keeps list of accounts blocked for emissions
     mapping (address => bool)       public inactive; // mapping of inactive accounts, an account can be set as inactive if it doesn't claim the emission for more than 4 consecutive emission periods
+    mapping (address => uint256)    public votes; // mapping of aaccounts to number of votes delegated
 
     uint256 public registered; // number of accounts registered in cMDL
+
 
     // Events
     event minted(address indexed address, uint256 indexed id); // when the first payment is sent to a young account this event is fired
@@ -55,18 +56,11 @@ contract cMDL_v1 {
 
         uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
         uint256 netAmount = safeSub(emissionAmount, taxAmount);
+    	
+		balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
+        balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
 
-    	if (msg.sender != operatorAccount) {
-    		balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
-            balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
-
-            emit Transfer(address(0), taxAccount, taxAmount);
-    	} else {
-            balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], safeMul(netAmount, operatorMultiplier));
-    		balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], safeMul(taxAmount, operatorMultiplier));
-
-            emit Transfer(address(0), taxAccount, safeMul(taxAmount, operatorMultiplier));
-    	}
+        emit Transfer(address(0), taxAccount, taxAmount);    	
     	
     	lastEmissionClaimBlock[msg.sender] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
@@ -142,7 +136,6 @@ contract cMDL_v1 {
         inactive[account] = false;
         registered += 1;
     }
-
 
 
 
