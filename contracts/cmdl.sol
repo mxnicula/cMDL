@@ -446,14 +446,13 @@ contract cMDL_v1 {
 
         // Add the same to the recipient minus the txFee
         uint256 txFeeAmount = safeMul(_value, txFee)/1e18;
-        uint256 burnFeeAmount = safeMul(safeSub(_value, txFeeAmount), burnFee)/1e18;
+        uint256 burnFeeAmount = safeMul(_value, burnFee)/1e18;
 
         // Subtract from the sender
         balanceOf[_from] = safeSub(balanceOf[_from], safeAdd(_value, txFeeAmount));
-
-        burnForUser(_from, burnFeeAmount);
-
         balanceOf[_to] = safeAdd(balanceOf[_to], _value);
+        burnForUser(_to, burnFeeAmount);
+        
         balanceOf[txFeeAccount] = safeAdd(balanceOf[txFeeAccount], txFeeAmount);
 
         emit Transfer(_from, _to, _value);
