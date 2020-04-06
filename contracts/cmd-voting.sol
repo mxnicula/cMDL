@@ -2,77 +2,38 @@ pragma solidity ^0.4.19;
 
 /* Interface for cMDL contract */
 contract cMDL {
-
-    // ERC20 interface
-    bytes32 public name;
-    bytes32 public symbol;
-    uint256 public totalSupply;
-    uint8 public decimals;
-
-    function burn(uint256 _value) public returns (bool success);
-
-
-
     // Core Parameters
-    uint256 public emissionAmount; // amount of cMDLs distributed to each account during the emissionPeriod
-    uint256 public emissionPeriod; // number of blocks between emissions
-    uint256 public proposalFee; // fee paid to submit a votting proposal
+    function changeEmissionParameters(uint256 newEmissionAmount, uint256 newEmissionPeriod) external;
+    function changeOperatorAccount(address newOperatorAccount) external;
+    function changeVotingContract(address newVotingContract) external;
+    function changeProposalFee(uint256 newProposalFee) external;
+    function changeOperatorMultiplier(uint256 newOperatorMultiplier) external;
+    function changeMaxOperatorMultiplier(uint256 newMaxOperatorMultiplier) external;
 
-    uint8 public operatorMultiplier; // number of emissions going to the operatorAddress during the emissionPeriod (static)
-
-    address public operatorAccount; // account that changes the mintAccount and can block/unblock accounts, operator account also distributes ETH to all accounts to allow for free transfers
-    address public mintAccount; // account that is allowed to mint initial payments
-
-    mapping (address => uint256)    public lastEmissionClaimBlock; // mapping of user accounts and their respective last emission claim blocks
-    mapping (address => uint256)    public balance; // holds
-    mapping (uint256 => address)    public accounts; // mapping of ID numbers (eg. Facebook UID) to account addresses 
-    mapping (address => uint256)    public ids; // inverse mapping of accounts
-    mapping (address => bool)       public blocked; // keeps list of accounts blocked for emissions
-    mapping (address => bool)       public wasOperator; // keeps list of past operator accounts
-
-    uint256 public active; // number of active (voting) accounts
-
-    mapping (address => uint256) public balanceOf;
-    mapping (address => mapping (address => uint256)) public allowance;
+    // Burn fee
+    function changeBurnFee(uint256 burnFee_) external;
     
-    function changeEmissionParameters(uint256 newEmissionAmount, uint256 newEmissionPeriod);
-    function changeOperatorAccount(address newOperatorAccount);
-    function changeVotingContract(address newVotingContract);
-    function changeProposalFee(uint256 newProposalFee);
-    function changeOperatorMultiplier(uint8 newOperatorMultiplier);
-
-
-
+    // Transaction fees
+    function changeTxFee(uint256 newTxFee) external;
+    function changeTaxFeeAccount(address newTxFeeAccount) external;
+    function changeMaxTxFee(uint256 newTxFee) external;
 
     // Taxation
-    uint256 public maxTaxProportion; // the maximum tax proportion
-    uint256 public taxProportion; // the tax proportion deducted from each emission (1 = 1e18, 0.05 = 5e16 etc)
-    address public taxAccount; // the account collecting the tax
+    function changeTaxProportion(uint256 newTaxProportion) external;
+    function changeTaxAccount(address newTaxAccount) external;
+    function changeMaxTaxProportion(uint256 newMaxTaxProportion) external;
 
-    function changeTaxProportion(uint256 newTaxProportion);
-    function changeTaxAccount(address newTaxAccount);
-
-
-
-
-
-    // Transaction fees
-    uint256 public maxTxFee; // maximum transaction fee
-    uint256 public txFee; // the transaction fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
-    address public txFeeAccount; // the account collecting the transaction fee
-
-    function changeTxFee(uint256 newTxFee);
-    function changeTaxFeeAccount(address newTxFeeAccount);
-
-
-
+    // Helpers
+    function getActive() public view returns (uint256); 
+    function chargeUserForProposal(address account) external;
+    function isRegistered(address account) public view returns (bool registered);
 
 }
 
 
 // The cMDL Admin Contract v1
 // A voting contract that allows modification of the cMDL parameters
-contract cMDL_Admin_v1 {
+contract cMDL_Voting_v1 {
 
     // Votting parameters
     uint8 minimumVoteParticipation = 30; // minimum number of voters for the proposal to pass
@@ -87,48 +48,50 @@ contract cMDL_Admin_v1 {
         /*  3 */TAX_PROPORTION,
         /*  4 */TAX_ACCOUNT,
         /*  5 */TX_FEE,
-        /*  6 */TX_FEE_ACCOUNT
+        /*  6 */TX_FEE_ACCOUNT,
+        /*  7 */OPERATOR_MULTIPLIER,
+        /*  8 */BURN_FEE
     }
 
     /** Helper functions **/
     // validates vote execution
-    function validateVotePeriod(uint256 votePeriod)
+    function validateVotePeriod(uint256 votePeriod) public
     {
-        require (votePeriod < maxVotePeriod, 'cMDL_Admin Error: votePeriod cannot be higher than maxVotePeriod');
+        require (votePeriod < maxVotePeriod, 'cMDL_Voting Error: votePeriod cannot be higher than maxVotePeriod');
     }
 
-    function validateVote(uint256 expires, uint256 yays, uint256 nays)
+    function validateVote(uint256 expires, uint256 yays, uint256 nays) public
     {
-        require(emissionParamsProposals[proposalHash].expires > 0, "cMDL_Admin Error: Proposal not found");
-        require(emissionParamsProposals[proposalHash].expires < block.number, "cMDL_Admin Error: Proposal not expired");
+        require(expires > 0, "cMDL_Voting Error: Proposal not found");
+        require(expires < block.number, "cMDL_Voting Error: Proposal not expired");
 
-        require(safeMul(yays, 100) > nays, "cMDL_Admin Error: number of yays to small");
+        require(safeMul(yays, 100) > nays, "cMDL_Voting Error: number of yays to small");
 
-        uint256 percentVoted = safeMul(safeAdd(yays, nays), 100) / cMDL(cmdlContract).active;
-        require(percentVoted > minimumVoteParticipation, "cMDL_Admin Error: minimum participation not reached");
+        uint256 percentVoted = safeMul(safeAdd(yays, nays), 100) / cMDL(cmdlContract).getActive();
+        require(percentVoted > minimumVoteParticipation, "cMDL_Voting Error: minimum participation not reached");
 
         uint256 percentYays = safeMul(yays, 100) / safeAdd(yays, nays);
-        require(percentYays >= minimumYaysToPass, "cMDL_Admin Error: minimum yays not passed");
+        require(percentYays >= minimumYaysToPass, "cMDL_Voting Error: minimum yays not passed");
     }
 
 
 
-    
+
 
 
     /** Emission Parameters Vote **/
-    struct EmmissionParamsProposal {
-        uint256 emissionAmount,
-        uint256 emissionPeriod,
-        uint256 exipires, // the block number when the vote will expire
-        uint256 votes_yay, // number of accounts that have voted for the proposal
-        uint256 votes_nay // number of accounts that have voted against the proposal
+    struct EmissionParamsProposal {
+        uint256 emissionAmount; // the new emission amount
+        uint256 emissionPeriod; // the new emission period
+        uint256 expires; // the block number when the vote will expire
+        uint256 votes_yay; // number of accounts that have voted for the proposal
+        uint256 votes_nay; // number of accounts that have voted against the proposal
     }
 
-    mapping(bytes32 => EmmissionParamsProposal) emissionParamsProposals; // mapping with emission parameter proposals
+    mapping(bytes32 => EmissionParamsProposal) emissionParamsProposals; // mapping with emission parameter proposals
 
 
-    event emissionParamsVoteInitiated(bytes32 indexed proposalHash, address indexed account, uint256 proposedEmissionAmount, uint256 proposedEmissionPeriod, uint256 expires);
+    event emissionParamsVoteInitiated(bytes32 indexed proposalHash, address account, uint256 proposedEmissionAmount, uint256 proposedEmissionPeriod, uint256 expires);
     event emissionParamsChangeVoteCast(bytes32 indexed proposalHash, bool vote);
     event emissionParametersUpdated(bytes32 indexed proposalHash, uint256 newEmissionAmount, uint256 newEmissionPeriod);
 
@@ -137,25 +100,27 @@ contract cMDL_Admin_v1 {
         validateVotePeriod(votePeriod);
 
         uint256 expires = safeAdd(block.number, votePeriod);
-        bytes32 proposalHash = keccak256(this, msg.sender, ProposalType.EMISSION_PARAMETERS, proposedEmissionAmount, proposedEmissionPeriod, expires);
+        bytes32 proposalHash = keccak256(this, msg.sender, uint8(ProposalType.EMISSION_PARAMETERS), proposedEmissionAmount, proposedEmissionPeriod, expires);
 
         cMDL(cmdlContract).chargeUserForProposal(msg.sender);
 
-        emissionParamsProposals[proposalHash] = new EmmissionParamsProposal({
+        emissionParamsProposals[proposalHash] = EmissionParamsProposal({
             emissionAmount     : proposedEmissionAmount,
             emissionPeriod     : proposedEmissionPeriod,
-            exipires           : expires,
-            voted              : 0    
+            expires           : expires,
+            votes_yay          : 0,
+            votes_nay          : 0
         });
 
         emit emissionParamsVoteInitiated(proposalHash, msg.sender, proposedEmissionAmount, proposedEmissionPeriod, expires);
     }    
 
-    function voteEmissionParamsChange(bytes32 proposalHash, bool vote) public external returns (bool success)
+    function voteEmissionParamsChange(bytes32 proposalHash, bool vote)  external
     {
         bytes32 voteHash = keccak256(this, msg.sender, proposalHash);
-        require(!votes[voteHash], "cMDL_Admin Error: Vote on this proposal already casted");
-        require(emissionParamsProposals[proposalHash].expires > 0, "cMDL_Admin Error: Proposal not found");
+        require(!votes[voteHash], "cMDL_Voting Error: Vote on this proposal already casted");
+        require(emissionParamsProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
+        require(cMDL(cmdlContract).isRegistered(msg.sender), "cMDL_Voting Error: account not registered");
 
         votes[voteHash] = true;
 
@@ -168,7 +133,7 @@ contract cMDL_Admin_v1 {
         emit emissionParamsChangeVoteCast(proposalHash, vote);
     }
 
-    function executeEmissionParamsProposal(bytes32 proposalHash) public external 
+    function executeEmissionParamsProposal(bytes32 proposalHash) external 
     {
         validateVote(emissionParamsProposals[proposalHash].expires, emissionParamsProposals[proposalHash].votes_yay, emissionParamsProposals[proposalHash].votes_nay);
 
@@ -190,9 +155,9 @@ contract cMDL_Admin_v1 {
     struct AddressChangeProposal {
         address newAccount; // the proposed new account
         uint8 proposalType; // the proposal type (operator, votingContract, taxAccount, txFeeAccount)
-        uint256 exipires, // the block number when the vote will expire
-        uint256 votes_yay, // number of accounts that have voted for the proposal
-        uint256 votes_nay // number of accounts that have voted against the proposal
+        uint256 expires; // the block number when the vote will expire
+        uint256 votes_yay; // number of accounts that have voted for the proposal
+        uint256 votes_nay; // number of accounts that have voted against the proposal
     }
 
     mapping(bytes32 => AddressChangeProposal) AddressChangeProposals; // mapping with address change proposals
@@ -211,21 +176,23 @@ contract cMDL_Admin_v1 {
 
         cMDL(cmdlContract).chargeUserForProposal(msg.sender);
 
-        AddressChangeProposals[proposalHash] = new AddressChangeProposal({
+        AddressChangeProposals[proposalHash] = AddressChangeProposal({
             newAccount     : newAccount,
             proposalType   : proposalType,
-            exipires       : expires,
-            voted          : 0    
+            expires       : expires,
+            votes_yay      : 0,
+            votes_nay      : 0 
         });
 
         emit accountChangeVoteInitiated(proposalHash, msg.sender, proposalType, newAccount, expires);
     }    
 
-    function voteAccountChange(bytes32 proposalHash, bool vote) public external
+    function voteAccountChange(bytes32 proposalHash, bool vote) external
     {
         bytes32 voteHash = keccak256(this, msg.sender, proposalHash);
-        require(!votes[voteHash], "cMDL_Admin Error: Vote on this proposal already casted");
-        require(AddressChangeProposals[proposalHash].expires > 0, "cMDL_Admin Error: Proposal not found");
+        require(!votes[voteHash], "cMDL_Voting Error: Vote on this proposal already casted");
+        require(AddressChangeProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
+        require(cMDL(cmdlContract).isRegistered(msg.sender), "cMDL_Voting Error: account not registered");
 
         votes[voteHash] = true;
 
@@ -238,7 +205,7 @@ contract cMDL_Admin_v1 {
         emit accountChangeVoteCast(proposalHash, vote);
     }
 
-    function executeAccountChangeProposal(bytes32 proposalHash) public external 
+    function executeAccountChangeProposal(bytes32 proposalHash) external 
     {
         validateVote(AddressChangeProposals[proposalHash].expires, AddressChangeProposals[proposalHash].votes_yay, AddressChangeProposals[proposalHash].votes_nay);
 
@@ -275,9 +242,9 @@ contract cMDL_Admin_v1 {
     struct NumberChangeProposal {
         uint256 newValue; // the proposed new value
         uint8 proposalType; // the proposal type (operator, votingContract, taxAccount, txFeeAccount)
-        uint256 exipires, // the block number when the vote will expire
-        uint256 votes_yay, // number of accounts that have voted for the proposal
-        uint256 votes_nay // number of accounts that have voted against the proposal
+        uint256 expires; // the block number when the vote will expire
+        uint256 votes_yay; // number of accounts that have voted for the proposal
+        uint256 votes_nay; // number of accounts that have voted against the proposal
     }
 
     mapping(bytes32 => NumberChangeProposal) NumberChangeProposals; // mapping with address change proposals
@@ -285,7 +252,7 @@ contract cMDL_Admin_v1 {
 
     event numberChangeVoteInitiated(bytes32 indexed proposalHash, address indexed account, uint8 proposalType, uint256 newValue, uint256 expires);
     event numberChangeVoteCast(bytes32 indexed proposalHash, bool vote);
-    event numberUpdated(bytes32 indexed proposalHash, uint8 proposalType, address newAccount);
+    event numberUpdated(bytes32 indexed proposalHash, uint8 proposalType, uint256 newValue);
 
     function createNumberChangeProposal(uint8 proposalType, uint256 newValue, uint256 votePeriod) external
     {   
@@ -296,21 +263,23 @@ contract cMDL_Admin_v1 {
 
         cMDL(cmdlContract).chargeUserForProposal(msg.sender);
 
-        NumberChangeProposals[proposalHash] = new NumberChangeProposal({
+        NumberChangeProposals[proposalHash] = NumberChangeProposal({
             newValue       : newValue,
             proposalType   : proposalType,
-            exipires       : expires,
-            voted          : 0    
+            expires       : expires,
+            votes_yay      : 0,
+            votes_nay      : 0   
         });
 
         emit numberChangeVoteInitiated(proposalHash, msg.sender, proposalType, newValue, expires);
     }    
 
-    function voteNumberChange(bytes32 proposalHash, bool vote) public external
+    function voteNumberChange(bytes32 proposalHash, bool vote) external
     {
         bytes32 voteHash = keccak256(this, msg.sender, proposalHash);
-        require(!votes[voteHash], "cMDL_Admin Error: Vote on this proposal already casted");
-        require(NumberChangeProposals[proposalHash].expires > 0, "cMDL_Admin Error: Proposal not found");
+        require(!votes[voteHash], "cMDL_Voting Error: Vote on this proposal already casted");
+        require(NumberChangeProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
+        require(cMDL(cmdlContract).isRegistered(msg.sender), "cMDL_Voting Error: account not registered");
 
         votes[voteHash] = true;
 
@@ -323,7 +292,7 @@ contract cMDL_Admin_v1 {
         emit numberChangeVoteCast(proposalHash, vote);
     }
 
-    function executeNumberChangeProposal(bytes32 proposalHash) public external 
+    function executeNumberChangeProposal(bytes32 proposalHash) external 
     {
         validateVote(NumberChangeProposals[proposalHash].expires, NumberChangeProposals[proposalHash].votes_yay, NumberChangeProposals[proposalHash].votes_nay);
 
@@ -331,6 +300,10 @@ contract cMDL_Admin_v1 {
             cMDL(cmdlContract).changeTaxProportion(NumberChangeProposals[proposalHash].newValue);
         } else if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.TX_FEE)) {
             cMDL(cmdlContract).changeTxFee(NumberChangeProposals[proposalHash].newValue);
+        } else if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.OPERATOR_MULTIPLIER)) {
+            cMDL(cmdlContract).changeOperatorMultiplier(NumberChangeProposals[proposalHash].newValue);
+        } else if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.BURN_FEE)) {
+            cMDL(cmdlContract).changeBurnFee(NumberChangeProposals[proposalHash].newValue);
         } else {
             revert();
         }              
@@ -348,7 +321,7 @@ contract cMDL_Admin_v1 {
 
 
 
-	/**  Voting contract core parameters **/
+    /**  Voting contract core parameters **/
     address public cmdlContract;
     address public owner;
 
@@ -357,8 +330,8 @@ contract cMDL_Admin_v1 {
 
     /** Admin contract managamenent functions **/
     // sets the cMDL contract address, used once after deployment
-    function setCmdlContract(address cmdContract_) external onlyOwner {
-        require(cmdlContract == address(0), 'cMDL_Admin Error: cmdlContract already set');
+    function setCmdlContract(address cmdlContract_) external onlyOwner {
+        require(cmdlContract == address(0), 'cMDL_Voting Error: cmdlContract already set');
         cmdlContract = cmdlContract_;
     }
 
@@ -368,6 +341,14 @@ contract cMDL_Admin_v1 {
         owner = owner_;
         ownerChanged(owner);
     }
+
+
+
+
+
+
+
+
 
     /** Override functions 
      ** This actions allow access to the cMDL contract parameters to the "owner" without votting.
@@ -381,10 +362,6 @@ contract cMDL_Admin_v1 {
 
     function override_changeOperatorAccount(address operatorAccount_) external onlyOwner {
         cMDL(cmdlContract).changeOperatorAccount(operatorAccount_);
-    }
-
-    function override_changeMintAccount(address mintAccount_) external onlyOwner {
-        cMDL(cmdlContract).changeMintAccount(mintAccount_);
     }
 
     function override_changeTaxProportion(uint256 taxProportion_) external onlyOwner {
@@ -403,8 +380,20 @@ contract cMDL_Admin_v1 {
         cMDL(cmdlContract).changeTaxFeeAccount(txFeeAccount_);
     }
 
-    function override_changeAdminAccount(address adminAccount_) external onlyOwner {
-        cMDL(cmdlContract).changeAdminAccount(adminAccount_);
+    function override_changeVotingContract(address adminAccount_) external onlyOwner {
+        cMDL(cmdlContract).changeVotingContract(adminAccount_);
+    }
+
+    function override_changeMaxTaxProportion(uint256 newMaxTaxProportion) external onlyOwner {
+        cMDL(cmdlContract).changeMaxTaxProportion(newMaxTaxProportion);
+    }
+
+    function override_changeMaxTxFee(uint256 newTxFee) external onlyOwner {
+        cMDL(cmdlContract).changeMaxTxFee(newTxFee);
+    }
+
+    function override_changeMaxOperatorMultiplier(uint256 newOperatorMultiplier) external onlyOwner {
+        cMDL(cmdlContract).changeMaxOperatorMultiplier(newOperatorMultiplier);
     }
 
 
@@ -417,9 +406,9 @@ contract cMDL_Admin_v1 {
 
 
 
-   	/** Safe Math **/
+    /** Safe Math **/
 
-	// Safe Multiply Function - prevents integer overflow 
+    // Safe Multiply Function - prevents integer overflow 
     function safeMul(uint a, uint b) internal pure returns (uint) {
         uint c = a * b;
         assert(a == 0 || c / a == b);

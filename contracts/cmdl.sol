@@ -1,30 +1,94 @@
-pragma solidity ^0.4.19;
+pragma solidity ^0.5.16;
 
 
 // The cMDL Token Contract
 contract cMDL_v1 {    
 
-	// Core Parameters
+    /** Paramaeters **/
+    // Core
     uint256 public emissionAmount; // amount of cMDLs distributed to each account during the emissionPeriod
     uint256 public emissionPeriod; // number of blocks between emissions
     uint256 public proposalFee; // fee paid to submit a votting proposal in order to change emission parameters
 
     uint8 public inactivityPeriods = 4; // number of claims missed before an account can be marked as inactive
 
-    uint8 public operatorMultiplier = 10; // number of emissions going to the operatorAddress during the emissionPeriod (static)
-    uint8 public maxOperatorMultiplier = 1000; // maximum value for the operatorMultiplier
+    // Burn Fees
+    uint256 public burnFee; // the burn fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
+    
+    // Transaction Fees
+    uint256 public maxTxFee; // maximum transaction fee
+    uint256 public txFee; // the transaction fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
+    address public txFeeAccount; // the account collecting the transaction fee
+    
+    // Taxation
+    uint256 public maxTaxProportion; // the maximum tax proportion
+    uint256 public taxProportion; // the tax proportion deducted from each emission (1 = 1e18, 0.05 = 5e16 etc)
+    address public taxAccount; // the account collecting the tax
+
+    // Voting Contract
+    address public votingContract; // the account controlling cMDL parameters
+
+    // Operator
+    uint256 public operatorMultiplier = 10; // number of emissions going to the operatorAddress during the emissionPeriod (static)
+    
+    uint256 public maxOperatorMultiplier = 1000; // maximum value for the operatorMultiplier
 
     address public operatorAccount; // account that changes the mintAccount and can block/unblock accounts, operator account also distributes Rinkeby ETH to all accounts to allow for free transfers
     address public mintAccount; // account that is allowed to mint initial payments
     
-    // the account controlling cMDL parameters 
-    address public votingContracnt; 
+    
+    
+    
 
 
 
 
 
 
+    /** Events **/
+    // Parameters
+    event emissionParametersChanged(uint256 newEmissionAmount, uint256 newEmissionPeriod); // fired when emission parameters are changed
+    event operatorChanged(address indexed newOperatorAccount); // fired when operatorAccount is modified
+    event mintAccountChanged(address indexed newMintAccount); // fired when mint account is changed
+    event votingContractChanged(address indexed newVotingContract); // fired when mint account is changed
+    event proposalFeeChanged(uint256 newProposalFee); // fired when the proposal fee is changed
+    event chargedProposalFee(address indexed account, uint256 fee); // fired when a proposal fee is charged
+    event operatorMultiplierChanged(uint256 operatorMultiplier); // fired when Operator Multiplier is changed
+    event maxOperatorMultiplierChanged(uint256 newOperatorMultiplier); // fired when the max operator multiplier is changed
+    
+    // Operator
+    event minted(address indexed account, uint256 indexed id); // when the first payment is sent to a young account this event is fired
+    event userBlocked(address indexed account, bool blocked); // fired when an account is blocked or unblocked
+    event userSetInactive(address account); // fired when an account is marked as inactive
+    
+    // User
+    event claimed(address indexed account, uint256 amount); // fired on each emission claim performed by user
+    event recurringPaymentCreated(address indexed _from, address indexed recipientAccount,  bytes32 recurringPaymentHash, uint256 paymentAmount, uint256 paymentPeriod); // fired when a recurring payment is created
+    event recurringPaymentMade(bytes32 indexed hash, address indexed sender, address indexed receiver, uint256 paymentAmount);
+    event recurringPaymentCancelled(bytes32 indexed hash, address indexed sender, address indexed receiver, uint256 paymentAmount);
+
+    // Burn fee
+    event burnFeeChanged(uint256 newBurnFee); // fired when the burnFee is changed
+    
+    // Transaction Fees
+    event txFeeChanged(uint256 newTxFee); // fired when the taxProportion is changed
+    event txFeeAccountChanged(address newTxFeeAccount); // fired when the taxAccount is modified
+    event maxTxFeeChanged(uint256 newTxFeeAccount); // fired when the taxAccount is modified
+    
+    // Taxation
+    event taxProportionChanged(uint256 newTaxPercent); // fired when the taxProportion is changed
+    event taxAccountChanged(address newTaxAccount); // fired when the taxAccount is modified
+    event maxTaxProportionModified(uint256 newMaxTaxProportion); // fired when the taxAccount is modified
+
+
+
+
+
+
+
+    /**
+     * cMDL Functions
+     * */
 
     /** Emission Functionality **/  
     // Internal parameters
@@ -39,90 +103,147 @@ contract cMDL_v1 {
     uint256 public active; // number of active (voting) accounts
 
 
-    // Events
-    event minted(address indexed address, uint256 indexed id); // when the first payment is sent to a young account this event is fired
-    event claimed(address indexed address, uint256 amount); // fired on each emission claim performed by user
-    event blocked(address indexed address, bool blocked); // fired when an account is blocked or unblocked
-    event setInactive(address account); // fired when an account is marked as inactive
+    
 
 
+    /** User Functions **/
     // Claim emission function called by the holder once each emission period
-    function claimEmission() external public {
-    	require(safeSub(block.number, lastEmissionClaimBlock[msg.sender]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
+    function claimEmission() external {
+        require(safeSub(block.number, lastEmissionClaimBlock[msg.sender]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
 
-    	require(lastEmissionClaimBlock[msg.sender] > 0, "cMDL Error: account not registered");
-    	require(!blocked[msg.sender], "cMDL Error: account blocked");
+        require(lastEmissionClaimBlock[msg.sender] > 0, "cMDL Error: account not registered");
+        require(!blocked[msg.sender], "cMDL Error: account blocked");
 
         uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
         uint256 netAmount = safeSub(emissionAmount, taxAmount);
 
-    	if (msg.sender != operatorAccount) {
-    		balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
+        if (msg.sender != operatorAccount) {
+            balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
             balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
 
             emit Transfer(address(0), taxAccount, taxAmount);
-    	} else {
+        } else {
             balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], safeMul(netAmount, operatorMultiplier));
-    		balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], safeMul(taxAmount, operatorMultiplier));
+            balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], safeMul(taxAmount, operatorMultiplier));
 
             emit Transfer(address(0), taxAccount, safeMul(taxAmount, operatorMultiplier));
-    	}
-    	
-    	lastEmissionClaimBlock[msg.sender] = block.number;
+        }
+        
+        lastEmissionClaimBlock[msg.sender] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
 
-        if (inactive[account])
+        if (inactive[msg.sender])
         {
-            setActive(account);
+            setActive(msg.sender);
         }
 
-    	emit claimed(msg.sender, emissionAmount);
-    	emit Transfer(address(0), msg.sender, emissionAmount);
+        emit claimed(msg.sender, emissionAmount);
+        emit Transfer(address(0), msg.sender, emissionAmount);
     }
-
+    
+    
+    
+    // Recurring payments
+    struct RecurringPayment {
+        uint256 paymentAmount; // the recurring payment amount
+        uint256 recurringPeriod; // the recurring period
+        uint256 expires; // the block number when the recurring payment ends
+        uint256 lastPayment; // the block number of the last payment
+    }
+    
+    //       hash               from
+    mapping (bytes32 => RecurringPayment) public recurringPayments; // mapping of recurring payments
+    
+    function createRecurringPayment(uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) external {
+        bytes32 recurringPaymentHash = keccak256(this, msg.sender, recipientAccount, paymentAmount, paymentPeriod);
+        
+        recurringPayments[recurringPaymentHash] = RecurringPayment({
+            sender            : msg.sender,
+            receiver          : recipientAccount,
+            paymentAmount     : paymentAmount,
+            recurringPeriod   : recurringPeriod,
+            expires           : expires,
+            startBlock        : block.number,
+            lastPayment       : 0
+        });
+        
+        emit recurringPaymentCreated(msg.sender, recipientAccount, recurringPaymentHash, paymentAmount, paymentPeriod);
+    }
+    
+    function  claimRecurringPayment(bytes32 hash) external {
+        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
+        require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
+        
+        uint8 paymentsAvailable = safeSub(block.number, max(startBlock, lastPayment)) / reccuringPeriod;
+        
+        require(paymentsAvailable > 0, "cMDL Error: no payments available");
+        
+        recurringPayments[hash].lastPayment = block.number;
+        
+        _transfer(recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
+        
+        emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
+    }
+    
+    function cancelRecurringPayment(bytes32 hash) external {
+        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
+        require(msg.sender == recurringPayments[hash].sender, "cMDL Error: access denied");
+        
+        recurringPayments[hash].expires = block.number;
+        
+        emit recurringPaymentCancelled(hash, msg.sender, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
+    }
+    
+    
+    
+    
+    
+    
+    /** Operator Functions **/
     // Mint the initial payment
     function mint(address account, uint256 id) external onlyMint {
-    	require(lastEmissionClaimBlock[account] == 0, "cMDL Error: account already registered");
-    	require(accounts[id] == address(0), "cMDL Error: account with this ID already exists");
+        require(lastEmissionClaimBlock[account] == 0, "cMDL Error: account already registered");
+        require(accounts[id] == address(0), "cMDL Error: account with this ID already exists");
         require(mintAccount != account, "cMDL Error: cannot mint to mintAccount");
 
         uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
         uint256 netAmount = safeSub(emissionAmount, taxAmount);
 
         balanceOf[account] = safeAdd(balanceOf[account], netAmount);
-    	balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
+        balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
 
-    	lastEmissionClaimBlock[account] = block.number;
+        lastEmissionClaimBlock[account] = block.number;
 
-    	accounts[id] = account;
-    	ids[account] = id;
+        accounts[id] = account;
+        ids[account] = id;
 
         totalSupply = safeAdd(totalSupply, emissionAmount);
 
         active = safeAdd(active, 1);
 
-    	emit minted(account, id, emissionAmount);
+        emit minted(account, id);
+        emit claimed(account, emissionAmount);
         emit Transfer(address(0), msg.sender, emissionAmount); 
-    	emit Transfer(address(0), taxAccount, taxAmount); 
+        emit Transfer(address(0), taxAccount, taxAmount); 
     }
 
 
     // Block account, prevents account from claimin emissions
     function blockAccount(address account) external onlyOperator {
-    	blocked[account] = true;
+        blocked[account] = true;
 
         active = safeSub(active, 1);
 
-    	emit blocked(account, true);
+        emit userBlocked(account, true);
     }
 
     // Unblock account, removes block from account
     function unBlockAccount(address account) external onlyOperator {
-    	blocked[account] = false;
+        blocked[account] = false;
 
         active = safeAdd(active, 1);
 
-    	emit blocked(account, false);
+        emit userBlocked(account, false);
     }
 
     // Set an account as inactive
@@ -133,7 +254,7 @@ contract cMDL_v1 {
         inactive[account] = true;
         active = safeSub(active, 1);
 
-        setInactive(account);
+        emit userSetInactive(account);
     }
 
     // Sets account as active and increases the number of active accounts (registered)
@@ -153,15 +274,6 @@ contract cMDL_v1 {
 
 
     /** Parameter Functionality **/    
-    // Parameter Events
-    event emissionParametersChanged(uint256 newEmissionAmount, uint256 newEmissionPeriod); // fired when emission parameters are changed
-    event operatorChanged(address indexed newOperatorAccount); // fired when operatorAccount is modified
-    event mintAccountChanged(address indexed newMintAccount); // fired when mint account is changed
-    event votingContractChanged(address indexed newVotingContract); // fired when mint account is changed
-    event proposalFeeChanged(uint256 newProposalFee); // fired when the proposal fee is changed
-    event chargedProposalFee(address indexed account, uint256 fee); // fired when a proposal fee is charged
-    event operatorMultiplierChanged()
-
     // the function called by the votingContract to change the cMDL emission parameters
     function changeEmissionParameters(uint256 emissionAmount_, uint256 emissionPeriod_) external onlyVote returns (bool success) {
         require(emissionAmount_ < safeMul(emissionAmount, 1618)/1000 && emissionAmount_ > safeMul(emissionAmount, 618)/1000, "cMDL Error: emissionSize out of bounds");
@@ -215,7 +327,7 @@ contract cMDL_v1 {
     }
 
     // function called by the votingContract to change the proposal fee
-    function changeOperatorMultiplier(uint8 newOperatorMultiplier) external onlyVote {
+    function changeOperatorMultiplier(uint256 newOperatorMultiplier) external onlyVote {
         require(newOperatorMultiplier < maxOperatorMultiplier && newOperatorMultiplier > 0, "cMDL Error: multiplier out of range" );
 
         operatorMultiplier = newOperatorMultiplier;
@@ -223,15 +335,60 @@ contract cMDL_v1 {
         emit operatorMultiplierChanged(operatorMultiplier);
     }
 
+    // function called by the votingContract to change the maxOperatorMultiplier
+    function changeMaxOperatorMultiplier(uint256 newMaxOperatorMultiplier) external onlyVote {
+        maxOperatorMultiplier = newMaxOperatorMultiplier;
+
+        emit maxOperatorMultiplierChanged(newMaxOperatorMultiplier);
+    }
 
 
 
+    
 
+    /** Transaction Burn Fee Functionality **/
+    // Transaction burn fee is the fee taken during each transfer from the transferred amount and burnt.
+    // This is necessary to combat inflation, through the burn fee, the total supply of cMDL is decreased 
+    // as the transferred volume increases
+    
+    // the function called by the vottingContract to change the burnFee
+    function changeBurnFee(uint256 burnFee_) external onlyVote {
+        require(burnFee_ < 20e16, "cMDL Error: burn fee cannot be higher than 20%");
 
+        burnFee = burnFee_;
+        emit burnFeeChanged(burnFee);
+    }
+    
+    
+    
+    
+    /** Transaction Fee Functionality **/
+    // Transaction fee account is the account receiving the transaction fee from each cMDL transfer
+    // This functionality is optional to mitigate network congestion that could lead to high network fees
+    // Can also be used to collect additional taxes from users
+    // Transaction fee is paid by the receiver
 
+    // the function called by the votingContract to change the txFee
+    function changeTxFee(uint256 txFee_) external onlyVote {
+        require(txFee_ < maxTxFee, "cMDL Error: txFee cannot be higher than maxTxFee");
 
+        txFee = txFee_;
+        emit txFeeChanged(txFee);
+    }
 
+    // the function called by the votingContract to change the txFeeAccount
+    function changeTaxFeeAccount(address txFeeAccount_) external onlyVote {
+        txFeeAccount = txFeeAccount_;
 
+        emit txFeeAccountChanged(txFeeAccount);
+    }
+
+    // the function called by the votingContract to change the txFeeAccount
+    function changeMaxTxFee(uint256 newTxFee) external onlyVote {
+        maxTxFee = newTxFee;
+
+        emit maxTxFeeChanged(maxTxFee);
+    }
 
 
 
@@ -240,12 +397,6 @@ contract cMDL_v1 {
     // Tax account is an account that can collect a share from every emission (up to 5% of the emission value)
     // The tax account can be further decentralized by making it a smart contract that can distribute the collected 
     // taxes further to other accounts that can also be smart contracts
-    uint256 public maxTaxProportion; // the maximum tax proportion
-    uint256 public taxProportion; // the tax proportion deducted from each emission (1 = 1e18, 0.05 = 5e16 etc)
-    address public taxAccount; // the account collecting the tax
-
-    event taxProportionChanged(uint256 newTaxPercent); // fired when the taxProportion is changed
-    event taxAccountChanged(address newTaxAccount); // fired when the taxAccount is modified
 
     // the function called by the votingContract to change the tax proportion
     function changeTaxProportion(uint256 taxProportion_) external onlyVote {
@@ -262,72 +413,12 @@ contract cMDL_v1 {
         emit taxAccountChanged(taxAccount);
     }
 
+    // function called by the votingContract to change the maxTaxProportion
+    function changeMaxTaxProportion(uint256 newMaxTaxProportion) external onlyVote {
+        maxTaxProportion = newMaxTaxProportion;
 
-
-
-
-
-
-
-
-
-
-
-
-    /** Transaction Fee Functionality **/
-    // Transaction fee account is the account receiving the transaction fee from each cMDL transfer
-    // This functionality is optional to mitigate network congestion that could lead to high network fees
-    // Can also be used to collect additional taxes from users
-    // Transaction fee is paid by the receiver
-    uint256 public maxTxFee; // maximum transaction fee
-    uint256 public txFee; // the transaction fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
-    address public txFeeAccount; // the account collecting the transaction fee
-
-    event txFeeChanged(uint256 newTxFee); // fired when the taxProportion is changed
-    event txFeeAccountChanged(address newTxFeeAccount); // fired when the taxAccount is modified
-
-    // the function called by the votingContract to change the txFee
-    function changeTxFee(uint256 txFee_) external onlyVote {
-        require(txFee_ < maxTxFee, "cMDL Error: txFee cannot be higher than maxTxFee");
-
-        txFee = txFee_;
-        emit txFeeChanged(txFee);
-        return true;
+        emit maxTaxProportionModified(maxTaxProportion);
     }
-
-    // the function called by the votingContract to change the txFeeAccount
-    function changeTaxFeeAccount(address txFeeAccount_) external onlyVote {
-        txFeeAccount = txFeeAccount_;
-
-        emit txFeeAccountChanged(txFeeAccount);
-    }
-
-
-
-
-
-
-
-
-
-
-    /** Transaction Burn Fee Functionality **/
-    // Transaction burn fee is the fee taken during each transfer from the transferred amount and burnt.
-    // This is necessary to combat inflation, through the burn fee, the total supply of cMDL is decreased 
-    // as the transferred volume increases
-    uint256 public burnFee; // the burn fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
-
-    event burnFeeChanged(uint256 newBurnFee); // fired when the burnFee is changed
-
-    // the function called by the operatorAccount to change the burnFee
-    function changeBurnFee(uint256 burnFee_) external onlyOperator {
-        require(burnFee_ < 5e16, "cMDL Error: burn fee cannot be higher than 5%");
-
-        burnFee = burnFee_;
-        emit burnFeeChanged(burnFee);
-    }
-
-
 
 
 
@@ -341,9 +432,9 @@ contract cMDL_v1 {
 
     /** Constructor **/
     // Constructor function, called once when deploying the contract
-    function constructor(
-        string name_,
-        string symbol_,
+    constructor(
+        string memory name_,
+        string memory symbol_,
 
         uint256 maxTaxProportion_,
         uint256 maxTxFee_,
@@ -353,13 +444,15 @@ contract cMDL_v1 {
         uint256 initialTaxProportion,
         uint256 initialTxFee,
         uint256 initialBurnFee,
+        
+        uint256 initialMaxOperatorMultiplier,
 
         address initialVotingContract, 
         address initialOperatorAccount, 
         address initialMintAccount,
         address initialTaxAccount,
         address initialTxFeeAccount
-    )
+    ) public
     {
         name = name_;
         symbol = symbol_;
@@ -372,8 +465,9 @@ contract cMDL_v1 {
         taxProportion   = initialTaxProportion;
         txFee           = initialTxFee;
         burnFee         = initialBurnFee;
+        maxOperatorMultiplier = initialMaxOperatorMultiplier;
 
-        votingContracnt = initialVotingContract;
+        votingContract = initialVotingContract;
         operatorAccount = initialOperatorAccount;
         mintAccount     = initialMintAccount;
         taxAccount      = initialTaxAccount;
@@ -386,7 +480,7 @@ contract cMDL_v1 {
     /** Modifiers **/
     // a modifier that allows only the votingContract to access a function
     modifier onlyVote {
-        require(msg.sender == votingContracnt, "cMDL Error: accesses denied");
+        require(msg.sender == votingContract, "cMDL Error: accesses denied");
         _;
     }
 
@@ -403,6 +497,35 @@ contract cMDL_v1 {
     }
 
 
+    /** Helpers **/
+    // Returns the smaller of two values
+    function min(uint a, uint b) private pure returns (uint) {
+        return a < b ? a : b;
+    }
+
+    // Returns the largest of the two values
+    function max(uint a, uint b) private pure returns (uint) {
+        return a > b ? a : b;
+    }
+    
+    // Returns the number of active accounts
+    function getActive() public view returns (uint256)
+    {
+        return active;
+    }
+    
+    // Returns true if the account is registered
+    function isRegistered(address account) public view returns (bool registered)
+    {
+        if (lastEmissionClaimBlock[account] > 0)
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
 
 
 
@@ -534,9 +657,9 @@ contract cMDL_v1 {
 
 
 
-   	/** Safe Math **/
+    /** Safe Math **/
 
-	// Safe Multiply Function - prevents integer overflow 
+    // Safe Multiply Function - prevents integer overflow 
     function safeMul(uint a, uint b) internal pure returns (uint) {
         uint c = a * b;
         assert(a == 0 || c / a == b);
