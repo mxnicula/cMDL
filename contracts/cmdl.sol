@@ -36,7 +36,6 @@ contract cMDL_v1 {
     event operatorChanged(address indexed newOperatorAccount); // fired when operatorAccount is modified
     event mintAccountChanged(address indexed newMintAccount); // fired when mint account is changed
     event votingContractChanged(address indexed newVotingContract); // fired when mint account is changed
-    event proposalFeeChanged(uint256 newProposalFee); // fired when the proposal fee is changed
     event chargedProposalFee(address indexed account, uint256 fee); // fired when a proposal fee is charged
    
     // Operator
