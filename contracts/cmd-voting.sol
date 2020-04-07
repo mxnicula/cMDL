@@ -6,22 +6,9 @@ contract cMDL {
     function changeEmissionParameters(uint256 newEmissionAmount, uint256 newEmissionPeriod) external;
     function changeOperatorAccount(address newOperatorAccount) external;
     function changeVotingContract(address newVotingContract) external;
-    function changeProposalFee(uint256 newProposalFee) external;
-    function changeOperatorMultiplier(uint256 newOperatorMultiplier) external;
-    function changeMaxOperatorMultiplier(uint256 newMaxOperatorMultiplier) external;
 
     // Burn fee
     function changeBurnFee(uint256 burnFee_) external;
-    
-    // Transaction fees
-    function changeTxFee(uint256 newTxFee) external;
-    function changeTaxFeeAccount(address newTxFeeAccount) external;
-    function changeMaxTxFee(uint256 newTxFee) external;
-
-    // Taxation
-    function changeTaxProportion(uint256 newTaxProportion) external;
-    function changeTaxAccount(address newTaxAccount) external;
-    function changeMaxTaxProportion(uint256 newMaxTaxProportion) external;
 
     // Helpers
     function getActive() public view returns (uint256); 
@@ -36,21 +23,16 @@ contract cMDL {
 contract cMDL_Voting_v1 {
 
     // Votting parameters
-    uint8 minimumVoteParticipation = 30; // minimum number of voters for the proposal to pass
-    uint8 minimumYaysToPass = 51; // minimum proportion of yays to pass a change from the total number of voters
+    uint8 minVoteParticipation = 30; // minimum number of voters for the proposal to pass
+    uint8 minYaysToPass = 51; // minimum proportion of yays to pass a change from the total number of voters
 
     mapping(bytes32 => bool) votes; // holds all the votes made by the users
 
     enum ProposalType {
         /*  0 */EMISSION_PARAMETERS,                 
         /*  1 */OPERATOR_ACCOUNT,                
-        /*  2 */VOTING_CONTRACT,       
-        /*  3 */TAX_PROPORTION,
-        /*  4 */TAX_ACCOUNT,
-        /*  5 */TX_FEE,
-        /*  6 */TX_FEE_ACCOUNT,
-        /*  7 */OPERATOR_MULTIPLIER,
-        /*  8 */BURN_FEE
+        /*  2 */VOTING_CONTRACT,   
+        /*  3 */BURN_FEE
     }
 
     /** Helper functions **/
@@ -152,7 +134,7 @@ contract cMDL_Voting_v1 {
 
 
     /** Change account vote (operator, votingContract, taxAccount, txFeeAccount) **/
-    struct AddressChangeProposal {
+    struct AccountChangeProposal {
         address newAccount; // the proposed new account
         uint8 proposalType; // the proposal type (operator, votingContract, taxAccount, txFeeAccount)
         uint256 expires; // the block number when the vote will expire
@@ -160,7 +142,7 @@ contract cMDL_Voting_v1 {
         uint256 votes_nay; // number of accounts that have voted against the proposal
     }
 
-    mapping(bytes32 => AddressChangeProposal) AddressChangeProposals; // mapping with address change proposals
+    mapping(bytes32 => AccountChangeProposal) AccountChangeProposals; // mapping with address change proposals
 
 
     event accountChangeVoteInitiated(bytes32 indexed proposalHash, address indexed account, uint8 proposalType, address newAccount, uint256 expires);
@@ -176,7 +158,7 @@ contract cMDL_Voting_v1 {
 
         cMDL(cmdlContract).chargeUserForProposal(msg.sender);
 
-        AddressChangeProposals[proposalHash] = AddressChangeProposal({
+        AccountChangeProposals[proposalHash] = AccountChangeProposal({
             newAccount     : newAccount,
             proposalType   : proposalType,
             expires       : expires,
@@ -191,15 +173,15 @@ contract cMDL_Voting_v1 {
     {
         bytes32 voteHash = keccak256(this, msg.sender, proposalHash);
         require(!votes[voteHash], "cMDL_Voting Error: Vote on this proposal already casted");
-        require(AddressChangeProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
+        require(AccountChangeProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
         require(cMDL(cmdlContract).isRegistered(msg.sender), "cMDL_Voting Error: account not registered");
 
         votes[voteHash] = true;
 
         if (vote) {
-            AddressChangeProposals[proposalHash].votes_yay = safeAdd(AddressChangeProposals[proposalHash].votes_yay, 1);
+            AccountChangeProposals[proposalHash].votes_yay = safeAdd(AccountChangeProposals[proposalHash].votes_yay, 1);
         } else {
-            AddressChangeProposals[proposalHash].votes_nay = safeAdd(AddressChangeProposals[proposalHash].votes_nay, 1);
+            AccountChangeProposals[proposalHash].votes_nay = safeAdd(AccountChangeProposals[proposalHash].votes_nay, 1);
         }
         
         emit accountChangeVoteCast(proposalHash, vote);
@@ -207,23 +189,19 @@ contract cMDL_Voting_v1 {
 
     function executeAccountChangeProposal(bytes32 proposalHash) external 
     {
-        validateVote(AddressChangeProposals[proposalHash].expires, AddressChangeProposals[proposalHash].votes_yay, AddressChangeProposals[proposalHash].votes_nay);
+        validateVote(AccountChangeProposals[proposalHash].expires, AccountChangeProposals[proposalHash].votes_yay, AccountChangeProposals[proposalHash].votes_nay);
 
 
-        if (AddressChangeProposals[proposalHash].proposalType == uint8(ProposalType.OPERATOR_ACCOUNT)) {
-            cMDL(cmdlContract).changeOperatorAccount(AddressChangeProposals[proposalHash].newAccount);
-        } else if (AddressChangeProposals[proposalHash].proposalType == uint8(ProposalType.VOTING_CONTRACT)) {
-            cMDL(cmdlContract).changeVotingContract(AddressChangeProposals[proposalHash].newAccount);
-        } else if (AddressChangeProposals[proposalHash].proposalType == uint8(ProposalType.TAX_ACCOUNT)) {
-            cMDL(cmdlContract).changeTaxAccount(AddressChangeProposals[proposalHash].newAccount);
-        } else if (AddressChangeProposals[proposalHash].proposalType == uint8(ProposalType.TX_FEE_ACCOUNT)) {
-            cMDL(cmdlContract).changeTaxFeeAccount(AddressChangeProposals[proposalHash].newAccount);
+        if (AccountChangeProposals[proposalHash].proposalType == uint8(ProposalType.OPERATOR_ACCOUNT)) {
+            cMDL(cmdlContract).changeOperatorAccount(AccountChangeProposals[proposalHash].newAccount);
+        } else if (AccountChangeProposals[proposalHash].proposalType == uint8(ProposalType.VOTING_CONTRACT)) {
+            cMDL(cmdlContract).changeVotingContract(AccountChangeProposals[proposalHash].newAccount);
         } else {
             revert();
         }       
         
         
-        emit accountUpdated(proposalHash, AddressChangeProposals[proposalHash].proposalType, AddressChangeProposals[proposalHash].newAccount);
+        emit accountUpdated(proposalHash, AccountChangeProposals[proposalHash].proposalType, AccountChangeProposals[proposalHash].newAccount);
     }
 
 
@@ -239,7 +217,7 @@ contract cMDL_Voting_v1 {
 
 
     /** Change parameter vote (txFee and taxProportion) **/
-    struct NumberChangeProposal {
+    struct BurnFeeChangeProposal {
         uint256 newValue; // the proposed new value
         uint8 proposalType; // the proposal type (operator, votingContract, taxAccount, txFeeAccount)
         uint256 expires; // the block number when the vote will expire
@@ -247,14 +225,14 @@ contract cMDL_Voting_v1 {
         uint256 votes_nay; // number of accounts that have voted against the proposal
     }
 
-    mapping(bytes32 => NumberChangeProposal) NumberChangeProposals; // mapping with address change proposals
+    mapping(bytes32 => BurnFeeChangeProposal) BurnFeeChangeProposals; // mapping with address change proposals
 
 
-    event numberChangeVoteInitiated(bytes32 indexed proposalHash, address indexed account, uint8 proposalType, uint256 newValue, uint256 expires);
-    event numberChangeVoteCast(bytes32 indexed proposalHash, bool vote);
-    event numberUpdated(bytes32 indexed proposalHash, uint8 proposalType, uint256 newValue);
+    event burnFeeChangeVoteInitiated(bytes32 indexed proposalHash, address indexed account, uint8 proposalType, uint256 newValue, uint256 expires);
+    event burnFeeChangeVoteCast(bytes32 indexed proposalHash, bool vote);
+    event burnFeeUpdated(bytes32 indexed proposalHash, uint8 proposalType, uint256 newValue);
 
-    function createNumberChangeProposal(uint8 proposalType, uint256 newValue, uint256 votePeriod) external
+    function createBurnFeeChangeProposal(uint8 proposalType, uint256 newValue, uint256 votePeriod) external
     {   
         validateVotePeriod(votePeriod);
 
@@ -263,7 +241,7 @@ contract cMDL_Voting_v1 {
 
         cMDL(cmdlContract).chargeUserForProposal(msg.sender);
 
-        NumberChangeProposals[proposalHash] = NumberChangeProposal({
+        BurnFeeChangeProposals[proposalHash] = BurnFeeChangeProposal({
             newValue       : newValue,
             proposalType   : proposalType,
             expires       : expires,
@@ -271,44 +249,34 @@ contract cMDL_Voting_v1 {
             votes_nay      : 0   
         });
 
-        emit numberChangeVoteInitiated(proposalHash, msg.sender, proposalType, newValue, expires);
+        emit burnFeeChangeVoteInitiated(proposalHash, msg.sender, proposalType, newValue, expires);
     }    
 
-    function voteNumberChange(bytes32 proposalHash, bool vote) external
+    function voteBurnFeeChange(bytes32 proposalHash, bool vote) external
     {
         bytes32 voteHash = keccak256(this, msg.sender, proposalHash);
         require(!votes[voteHash], "cMDL_Voting Error: Vote on this proposal already casted");
-        require(NumberChangeProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
+        require(BurnFeeChangeProposals[proposalHash].expires > 0, "cMDL_Voting Error: Proposal not found");
         require(cMDL(cmdlContract).isRegistered(msg.sender), "cMDL_Voting Error: account not registered");
 
         votes[voteHash] = true;
 
         if (vote) {
-            NumberChangeProposals[proposalHash].votes_yay = safeAdd(NumberChangeProposals[proposalHash].votes_yay, 1);
+            BurnFeeChangeProposals[proposalHash].votes_yay = safeAdd(BurnFeeChangeProposals[proposalHash].votes_yay, 1);
         } else {
-            NumberChangeProposals[proposalHash].votes_nay = safeAdd(NumberChangeProposals[proposalHash].votes_nay, 1);
+            BurnFeeChangeProposals[proposalHash].votes_nay = safeAdd(BurnFeeChangeProposals[proposalHash].votes_nay, 1);
         }
         
-        emit numberChangeVoteCast(proposalHash, vote);
+        emit burnFeeChangeVoteCast(proposalHash, vote);
     }
 
-    function executeNumberChangeProposal(bytes32 proposalHash) external 
+    function executeBurnFeeChangeProposal(bytes32 proposalHash) external 
     {
-        validateVote(NumberChangeProposals[proposalHash].expires, NumberChangeProposals[proposalHash].votes_yay, NumberChangeProposals[proposalHash].votes_nay);
+        validateVote(BurnFeeChangeProposals[proposalHash].expires, BurnFeeChangeProposals[proposalHash].votes_yay, BurnFeeChangeProposals[proposalHash].votes_nay);
 
-        if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.TAX_PROPORTION)) {
-            cMDL(cmdlContract).changeTaxProportion(NumberChangeProposals[proposalHash].newValue);
-        } else if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.TX_FEE)) {
-            cMDL(cmdlContract).changeTxFee(NumberChangeProposals[proposalHash].newValue);
-        } else if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.OPERATOR_MULTIPLIER)) {
-            cMDL(cmdlContract).changeOperatorMultiplier(NumberChangeProposals[proposalHash].newValue);
-        } else if (NumberChangeProposals[proposalHash].proposalType == uint8(ProposalType.BURN_FEE)) {
-            cMDL(cmdlContract).changeBurnFee(NumberChangeProposals[proposalHash].newValue);
-        } else {
-            revert();
-        }              
+        cMDL(cmdlContract).changeBurnFee(BurnFeeChangeProposals[proposalHash].newValue);              
         
-        emit numberUpdated(proposalHash, NumberChangeProposals[proposalHash].proposalType, NumberChangeProposals[proposalHash].newValue);
+        emit burnFeeUpdated(proposalHash, BurnFeeChangeProposals[proposalHash].proposalType, BurnFeeChangeProposals[proposalHash].newValue);
     }   
 
 
@@ -364,37 +332,11 @@ contract cMDL_Voting_v1 {
         cMDL(cmdlContract).changeOperatorAccount(operatorAccount_);
     }
 
-    function override_changeTaxProportion(uint256 taxProportion_) external onlyOwner {
-        cMDL(cmdlContract).changeTaxProportion(taxProportion_);
-    }
-
-    function override_changeTaxAccount(address taxAccount_) external onlyOwner {
-        cMDL(cmdlContract).changeTaxAccount(taxAccount_);
-    }
-
-    function override_changeTxFee(uint256 txFee_) external onlyOwner {
-        cMDL(cmdlContract).changeTxFee(txFee_);
-    }
-
-    function override_changeTaxFeeAccount(address txFeeAccount_) external onlyOwner {
-        cMDL(cmdlContract).changeTaxFeeAccount(txFeeAccount_);
-    }
-
     function override_changeVotingContract(address adminAccount_) external onlyOwner {
         cMDL(cmdlContract).changeVotingContract(adminAccount_);
     }
 
-    function override_changeMaxTaxProportion(uint256 newMaxTaxProportion) external onlyOwner {
-        cMDL(cmdlContract).changeMaxTaxProportion(newMaxTaxProportion);
-    }
 
-    function override_changeMaxTxFee(uint256 newTxFee) external onlyOwner {
-        cMDL(cmdlContract).changeMaxTxFee(newTxFee);
-    }
-
-    function override_changeMaxOperatorMultiplier(uint256 newOperatorMultiplier) external onlyOwner {
-        cMDL(cmdlContract).changeMaxOperatorMultiplier(newOperatorMultiplier);
-    }
 
 
     /** Modifiers **/
