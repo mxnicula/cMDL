@@ -461,6 +461,22 @@ contract cMDL_v1 {
     }
 
     /**
+     * Signed Transfer
+     *
+     * Send `_value` tokens to `_to` from `_account`
+     *
+     * @param _to The address of the recipient
+     * @param _value the amount to send
+     */
+    function signedTransfer(address _to, uint256 _value, address _account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) public returns (bool success) {
+        bytes32 transferHash = keccak256(this, _account, _to, _value, nonce);
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", transferHash), v, r, s) == _account), "cMDL Error: invalid signature");
+
+        _transfer(_account, _to, _value);
+        return true;
+    }
+
+    /**
      * Transfer tokens from other address
      *
      * Send `_value` tokens to `_to` on behalf of `_from`
