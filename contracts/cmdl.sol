@@ -82,21 +82,7 @@ contract cMDL_v1 {
     }
 
     // Claim emission function called by the holder once each emission period
-    function claimEmission() external {
-        processEmissionClaim(msg.sender);
-    }
-
-    function signedEmissionClaim(address account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 emissionHash = keccak256(this, account, nonce, uint8(SignatureType.EMISSION_CLAIM));
-        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", emissionHash), v, r, s) == account), "cMDL Error: invalid signature");
-        require(!claim[emissionHash], "cMDL Error: emission already claimed");
-
-        claim[emissionHash] = true;
-
-        claimEmission(account);
-    }
-
-    function claimEmission(address account) internal {
+    function claimEmission(address account) external {
         require(safeSub(block.number, lastEmissionClaimBlock[account]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
 
         require(lastEmissionClaimBlock[account] > 0, "cMDL Error: account not registered");
@@ -130,7 +116,6 @@ contract cMDL_v1 {
         uint256 lastPayment; // the block number of the last payment
     }
     
-    //       hash               from
     mapping (bytes32 => RecurringPayment) public recurringPayments; // mapping of recurring payments
     
     function createRecurringPayment(uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) external {
@@ -158,21 +143,6 @@ contract cMDL_v1 {
         });
         
         emit recurringPaymentCreated(account, recipientAccount, recurringPaymentHash, paymentAmount, paymentPeriod);
-    }
-    
-    function claimRecurringPaymentForUser(address account, bytes32 hash) external {
-        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
-        require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
-        
-        uint8 paymentsAvailable = safeSub(block.number, max(startBlock, lastPayment)) / reccuringPeriod;
-        
-        require(paymentsAvailable > 0, "cMDL Error: no payments available");
-        
-        recurringPayments[hash].lastPayment = block.number;
-        
-        _transfer(recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
-        
-        emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
     }
 
     // claim a recurring payment
