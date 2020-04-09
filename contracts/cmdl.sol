@@ -28,8 +28,6 @@ contract cMDL_v1 {
 
 
 
-
-
     /** Events **/
     // Parameters
     event emissionParametersChanged(uint256 newEmissionAmount, uint256 newEmissionPeriod); // fired when emission parameters are changed
@@ -68,6 +66,7 @@ contract cMDL_v1 {
     mapping (address => uint256)    public ids; // inverse mapping of accounts
     mapping (address => bool)       public blocked; // keeps list of accounts blocked for emissions
     mapping (address => bool)       public inactive; // mapping of inactive accounts, an account can be set as inactive if it doesn't claim the emission for more than 4 consecutive emission periods
+    mapping (bytes32 => bool)       public claim; // mapping of claim hashes that have been executed
 
     uint256 public active; // number of active (voting) accounts
 
@@ -76,29 +75,49 @@ contract cMDL_v1 {
 
 
     /** User Functions **/
+    enum SignatureType {
+        /*  0 */EMISSION_CLAIM,                 
+        /*  1 */RECURRING_PAYMENT_CREATE,                
+        /*  2 */RECURRING_PAYMENT_CANCEL
+    }
+
     // Claim emission function called by the holder once each emission period
     function claimEmission() external {
-        require(safeSub(block.number, lastEmissionClaimBlock[msg.sender]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
+        processEmissionClaim(msg.sender);
+    }
 
-        require(lastEmissionClaimBlock[msg.sender] > 0, "cMDL Error: account not registered");
-        require(!blocked[msg.sender], "cMDL Error: account blocked");
+    function signedEmissionClaim(address account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external {
+        bytes32 emissionHash = keccak256(this, account, nonce, uint8(SignatureType.EMISSION_CLAIM));
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", emissionHash), v, r, s) == account), "cMDL Error: invalid signature");
+        require(!claim[emissionHash], "cMDL Error: emission already claimed");
+
+        claim[emissionHash] = true;
+
+        claimEmission(account);
+    }
+
+    function claimEmission(address account) internal {
+        require(safeSub(block.number, lastEmissionClaimBlock[account]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
+
+        require(lastEmissionClaimBlock[account] > 0, "cMDL Error: account not registered");
+        require(!blocked[account], "cMDL Error: account blocked");
 
         uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
         uint256 netAmount = safeSub(emissionAmount, taxAmount);
 
-        balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], netAmount);
+        balanceOf[account] = safeAdd(balanceOf[account], netAmount);
         
         
-        lastEmissionClaimBlock[msg.sender] = block.number;
+        lastEmissionClaimBlock[account] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
 
-        if (inactive[msg.sender])
+        if (inactive[account])
         {
-            setActive(msg.sender);
+            setActive(account);
         }
 
-        emit claimed(msg.sender, emissionAmount);
-        emit Transfer(address(0), msg.sender, emissionAmount);
+        emit claimed(account, emissionAmount);
+        emit Transfer(address(0), account, emissionAmount);
     }
     
     
@@ -115,10 +134,21 @@ contract cMDL_v1 {
     mapping (bytes32 => RecurringPayment) public recurringPayments; // mapping of recurring payments
     
     function createRecurringPayment(uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) external {
-        bytes32 recurringPaymentHash = keccak256(this, msg.sender, recipientAccount, paymentAmount, paymentPeriod);
+        createRecurringPaymentInternal(msg.sender, paymentAmount, recurringPeriod, recipientAccount, expires);
+    }
+
+    function signedCreateRecurringPayment(address account, uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires, uint8 v, bytes32 r, bytes32 s) external {
+        bytes32 recurringPaymentHash = keccak256(this, msg.sender, recipientAccount, paymentAmount, paymentPeriod, uint8(SignatureType.RECURRING_PAYMENT_CREATE));
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", recurringPaymentHash), v, r, s) == account), "cMDL Error: invalid signature");
+
+        createRecurringPaymentInternal(account, paymentAmount, recurringPeriod, recipientAccount, expires);
+    }
+
+    function createRecurringPaymentInternal(address account, uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) internal {
+        bytes32 recurringPaymentHash = keccak256(this, account, recipientAccount, paymentAmount, paymentPeriod);
         
         recurringPayments[recurringPaymentHash] = RecurringPayment({
-            sender            : msg.sender,
+            sender            : account,
             receiver          : recipientAccount,
             paymentAmount     : paymentAmount,
             recurringPeriod   : recurringPeriod,
@@ -127,11 +157,10 @@ contract cMDL_v1 {
             lastPayment       : 0
         });
         
-        emit recurringPaymentCreated(msg.sender, recipientAccount, recurringPaymentHash, paymentAmount, paymentPeriod);
+        emit recurringPaymentCreated(account, recipientAccount, recurringPaymentHash, paymentAmount, paymentPeriod);
     }
     
-    // create a recurring payment
-    function  claimRecurringPayment(bytes32 hash) external {
+    function claimRecurringPaymentForUser(address account, bytes32 hash) external {
         require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
         require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
         
@@ -145,15 +174,41 @@ contract cMDL_v1 {
         
         emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
     }
+
+    // claim a recurring payment
+    function claimRecurringPayment(bytes32 hash) external {
+        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
+        require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
+        
+        uint8 paymentsAvailable = safeSub(block.number, max(startBlock, lastPayment)) / reccuringPeriod;
+        
+        require(paymentsAvailable > 0, "cMDL Error: no payments available");
+        
+        recurringPayments[hash].lastPayment = block.number;
+        
+        _transfer(recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
+        
+        emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
+    }
+
+    function cancelRecurringPayment(bytes32 hash) external {
+        cancelRecurringPaymentInternal(msg.sender, hash);
+    }
+
+    function signedCancelRecurringPayment(address account, bytes32 hash, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external {
+        bytes32 cancelHash = keccak256(this, account, nonce, uint8());
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", emissionHash), v, r, s) == account), "cMDL Error: invalid signature");
+        cancelRecurringPaymentInternal(msg.sender, hash);
+    }
     
     // cancel an existing recurring payment
-    function cancelRecurringPayment(bytes32 hash) external {
+    function cancelRecurringPaymentInternal(address account, bytes32 hash) internal {
         require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
-        require(msg.sender == recurringPayments[hash].sender, "cMDL Error: access denied");
+        require(account == recurringPayments[hash].sender, "cMDL Error: access denied");
         
         recurringPayments[hash].expires = block.number;
         
-        emit recurringPaymentCancelled(hash, msg.sender, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
+        emit recurringPaymentCancelled(hash, account, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
     }    
 
     // function called by the votingContract to charge the user for creating a proposal
