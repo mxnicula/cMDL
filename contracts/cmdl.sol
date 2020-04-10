@@ -75,14 +75,13 @@ contract cMDL_v1 {
 
 
     /** User Functions **/
-    enum SignatureType {
-        /*  0 */EMISSION_CLAIM,                 
-        /*  1 */RECURRING_PAYMENT_CREATE,                
-        /*  2 */RECURRING_PAYMENT_CANCEL
+    enum SignatureType {               
+        /*  0 */RECURRING_PAYMENT_CREATE,                
+        /*  1 */RECURRING_PAYMENT_CANCEL
     }
 
     // Claim emission function called by the holder once each emission period
-    function claimEmission(address account) external {
+    function claimEmission(address account) external onlyMint {
         require(safeSub(block.number, lastEmissionClaimBlock[account]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
 
         require(lastEmissionClaimBlock[account] > 0, "cMDL Error: account not registered");
@@ -147,7 +146,7 @@ contract cMDL_v1 {
 
     // claim a recurring payment
     function claimRecurringPayment(bytes32 hash) external {
-        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
+        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring payment not found");
         require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
         
         uint8 paymentsAvailable = safeSub(block.number, max(startBlock, lastPayment)) / reccuringPeriod;
@@ -166,14 +165,14 @@ contract cMDL_v1 {
     }
 
     function signedCancelRecurringPayment(address account, bytes32 hash, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 cancelHash = keccak256(this, account, nonce, uint8());
+        bytes32 cancelHash = keccak256(this, account, nonce, uint8(SignatureType.RECURRING_PAYMENT_CANCEL));
         require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", emissionHash), v, r, s) == account), "cMDL Error: invalid signature");
-        cancelRecurringPaymentInternal(msg.sender, hash);
+        cancelRecurringPaymentInternal(account, hash);
     }
     
     // cancel an existing recurring payment
     function cancelRecurringPaymentInternal(address account, bytes32 hash) internal {
-        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring oayment not found");
+        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring payment not found");
         require(account == recurringPayments[hash].sender, "cMDL Error: access denied");
         
         recurringPayments[hash].expires = block.number;
@@ -205,7 +204,6 @@ contract cMDL_v1 {
         uint256 netAmount = safeSub(emissionAmount, taxAmount);
 
         balanceOf[account] = safeAdd(balanceOf[account], netAmount);
-        balanceOf[taxAccount] = safeAdd(balanceOf[taxAccount], taxAmount);
 
         lastEmissionClaimBlock[account] = block.number;
 
@@ -219,7 +217,6 @@ contract cMDL_v1 {
         emit minted(account, id);
         emit claimed(account, emissionAmount);
         emit Transfer(address(0), msg.sender, emissionAmount); 
-        emit Transfer(address(0), taxAccount, taxAmount); 
     }
 
     // Block account, prevents account from claimin emissions
@@ -350,21 +347,13 @@ contract cMDL_v1 {
         name = name_;
         symbol = symbol_;
 
-        maxTaxProportion= maxTaxProportion_;
-        maxTxFee        = maxTxFee_;
-
         emissionAmount  = initialEmissionAmount;
         emissionPeriod  = initialEmissionPeriod;
-        taxProportion   = initialTaxProportion;
-        txFee           = initialTxFee;
         burnFee         = initialBurnFee;
-        maxOperatorMultiplier = initialMaxOperatorMultiplier;
 
-        votingContract = initialVotingContract;
+        votingContract  = initialVotingContract;
         operatorAccount = initialOperatorAccount;
         mintAccount     = initialMintAccount;
-        taxAccount      = initialTaxAccount;
-        txFeeAccount    = initialTxFeeAccount;
     }
 
 
