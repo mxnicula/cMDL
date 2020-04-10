@@ -1,4 +1,4 @@
-pragma solidity ^0.5.16;
+pragma solidity ^0.4.19;
 
 
 // The cMDL Token Contract
@@ -87,11 +87,7 @@ contract cMDL_v1 {
         require(lastEmissionClaimBlock[account] > 0, "cMDL Error: account not registered");
         require(!blocked[account], "cMDL Error: account blocked");
 
-        uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
-        uint256 netAmount = safeSub(emissionAmount, taxAmount);
-
-        balanceOf[account] = safeAdd(balanceOf[account], netAmount);
-        
+        balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
         
         lastEmissionClaimBlock[account] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
@@ -122,14 +118,14 @@ contract cMDL_v1 {
     }
 
     function signedCreateRecurringPayment(address account, uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 recurringPaymentHash = keccak256(this, msg.sender, recipientAccount, paymentAmount, paymentPeriod, uint8(SignatureType.RECURRING_PAYMENT_CREATE));
-        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", recurringPaymentHash), v, r, s) == account), "cMDL Error: invalid signature");
+        bytes32 recurringPaymentHash = keccak256(this, msg.sender, recipientAccount, paymentAmount, recurringPeriod, uint8(SignatureType.RECURRING_PAYMENT_CREATE));
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", recurringPaymentHash), v, r, s) == account, "cMDL Error: invalid signature");
 
         createRecurringPaymentInternal(account, paymentAmount, recurringPeriod, recipientAccount, expires);
     }
 
     function createRecurringPaymentInternal(address account, uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) internal {
-        bytes32 recurringPaymentHash = keccak256(this, account, recipientAccount, paymentAmount, paymentPeriod);
+        bytes32 recurringPaymentHash = keccak256(this, account, recipientAccount, paymentAmount, recurringPeriod);
         
         recurringPayments[recurringPaymentHash] = RecurringPayment({
             sender            : account,
@@ -141,7 +137,7 @@ contract cMDL_v1 {
             lastPayment       : 0
         });
         
-        emit recurringPaymentCreated(account, recipientAccount, recurringPaymentHash, paymentAmount, paymentPeriod);
+        emit recurringPaymentCreated(account, recipientAccount, recurringPaymentHash, paymentAmount, recurringPeriod);
     }
 
     // claim a recurring payment
@@ -149,15 +145,15 @@ contract cMDL_v1 {
         require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring payment not found");
         require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
         
-        uint8 paymentsAvailable = safeSub(block.number, max(startBlock, lastPayment)) / reccuringPeriod;
+        uint8 paymentsAvailable = safeSub(block.number, max(recurringPayments[hash].startBlock, recurringPayments[hash].lastPayment)) / recurringPayments[hash].reccuringPeriod;
         
         require(paymentsAvailable > 0, "cMDL Error: no payments available");
         
         recurringPayments[hash].lastPayment = block.number;
         
-        _transfer(recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
+        _transfer(recurringPayments[hash].sender, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
         
-        emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, paymentAmount);
+        emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
     }
 
     function cancelRecurringPayment(bytes32 hash) external {
@@ -166,7 +162,7 @@ contract cMDL_v1 {
 
     function signedCancelRecurringPayment(address account, bytes32 hash, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external {
         bytes32 cancelHash = keccak256(this, account, nonce, uint8(SignatureType.RECURRING_PAYMENT_CANCEL));
-        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", emissionHash), v, r, s) == account), "cMDL Error: invalid signature");
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", hash), v, r, s) == account, "cMDL Error: invalid signature");
         cancelRecurringPaymentInternal(account, hash);
     }
     
@@ -200,10 +196,7 @@ contract cMDL_v1 {
         require(accounts[id] == address(0), "cMDL Error: account with this ID already exists");
         require(mintAccount != account, "cMDL Error: cannot mint to mintAccount");
 
-        uint256 taxAmount = safeMul(emissionAmount, taxProportion)/1e18;
-        uint256 netAmount = safeSub(emissionAmount, taxAmount);
-
-        balanceOf[account] = safeAdd(balanceOf[account], netAmount);
+        balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
 
         lastEmissionClaimBlock[account] = block.number;
 
@@ -449,8 +442,6 @@ contract cMDL_v1 {
         // Prevent transfer to 0x0 address. Use burn() instead
         require(address(_to) != address(0));        
 
-        // Add the same to the recipient minus the txFee
-        uint256 txFeeAmount = safeMul(_value, txFee)/1e18;
         uint256 burnFeeAmount = safeMul(_value, burnFee)/1e18;
 
         // Subtract from the sender
@@ -484,7 +475,7 @@ contract cMDL_v1 {
      */
     function signedTransfer(address _to, uint256 _value, address _account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) public returns (bool success) {
         bytes32 transferHash = keccak256(this, _account, _to, _value, nonce);
-        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", transferHash), v, r, s) == _account), "cMDL Error: invalid signature");
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", transferHash), v, r, s) == _account, "cMDL Error: invalid signature");
 
         _transfer(_account, _to, _value);
         return true;
