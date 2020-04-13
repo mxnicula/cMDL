@@ -23,7 +23,10 @@ contract cMDL_v1 {
     
     
     
-    
+    // Transaction Fees
+    uint256 public maxTxFee = 1e16; // maximum transaction fee 1%
+    uint256 public txFee; // the transaction fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
+    address public txFeeAccount; // the account collecting the transaction fee
 
 
 
@@ -50,7 +53,9 @@ contract cMDL_v1 {
     // Burn fee
     event burnFeeChanged(uint256 newBurnFee); // fired when the burnFee is changed
     
-
+    // Transaction Fees
+    event txFeeChanged(uint256 newTxFee); // fired when the taxProportion is changed
+    event txFeeAccountChanged(address newTxFeeAccount); // fired when the taxAccount is modified
 
 
 
@@ -105,9 +110,12 @@ contract cMDL_v1 {
     
     // Recurring payments
     struct RecurringPayment {
+        address sender;
+        address receiver;
         uint256 paymentAmount; // the recurring payment amount
         uint256 recurringPeriod; // the recurring period
         uint256 expires; // the block number when the recurring payment ends
+        uint256 startBlock; // creation block for recurring payment
         uint256 lastPayment; // the block number of the last payment
     }
     
@@ -145,8 +153,7 @@ contract cMDL_v1 {
         require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring payment not found");
         require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
         
-        uint8 paymentsAvailable = safeSub(block.number, max(recurringPayments[hash].startBlock, recurringPayments[hash].lastPayment)) / recurringPayments[hash].reccuringPeriod;
-        
+        uint256 paymentsAvailable = safeSub(block.number, max(recurringPayments[hash].startBlock, recurringPayments[hash].lastPayment)) / recurringPayments[hash].recurringPeriod;
         require(paymentsAvailable > 0, "cMDL Error: no payments available");
         
         recurringPayments[hash].lastPayment = block.number;
@@ -306,7 +313,29 @@ contract cMDL_v1 {
         emit burnFeeChanged(burnFee);
     }
     
-    
+
+
+
+    /** Transaction Fee Functionality **/
+    // Transaction fee account is the account receiving the transaction fee from each cMDL transfer
+    // This functionality is optional to mitigate network congestion that could lead to high network fees
+    // Can also be used to collect additional taxes from users
+    // Transaction fee is paid by the receiver
+
+    // the function called by the votingContract to change the txFee
+    function changeTxFee(uint256 txFee_) external onlyOperator {
+        require(txFee_ < maxTxFee, "cMDL Error: txFee cannot be higher than maxTxFee");
+
+        txFee = txFee_;
+        emit txFeeChanged(txFee);
+    }
+
+    // the function called by the votingContract to change the txFeeAccount
+    function changeTaxFeeAccount(address txFeeAccount_) external onlyOperator {
+        txFeeAccount = txFeeAccount_;
+
+        emit txFeeAccountChanged(txFeeAccount);
+    }
     
     
 
@@ -319,22 +348,13 @@ contract cMDL_v1 {
         string memory name_,
         string memory symbol_,
 
-        uint256 maxTaxProportion_,
-        uint256 maxTxFee_,
-
         uint256 initialEmissionAmount, 
         uint256 initialEmissionPeriod, 
-        uint256 initialTaxProportion,
-        uint256 initialTxFee,
         uint256 initialBurnFee,
         
-        uint256 initialMaxOperatorMultiplier,
-
         address initialVotingContract, 
         address initialOperatorAccount, 
-        address initialMintAccount,
-        address initialTaxAccount,
-        address initialTxFeeAccount
+        address initialMintAccount
     ) public
     {
         name = name_;
@@ -443,9 +463,10 @@ contract cMDL_v1 {
         require(address(_to) != address(0));        
 
         uint256 burnFeeAmount = safeMul(_value, burnFee)/1e18;
+        uint256 txFeeAmount = safeMul(_value, txFee)/1e18;
 
         // Subtract from the sender
-        balanceOf[_from] = safeSub(balanceOf[_from], _value);
+        balanceOf[_from] = safeSub(balanceOf[_from], safeAdd(_value, txFeeAmount));
         balanceOf[_to] = safeAdd(balanceOf[_to], _value);
         burnForUser(_to, burnFeeAmount);
 
