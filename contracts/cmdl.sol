@@ -24,7 +24,6 @@ contract cMDL_v1 {
     // Transaction Fees
     uint256 public maxTxFee = 1e16; // maximum transaction fee 1%
     uint256 public txFee; // the transaction fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
-    address public txFeeAccount; // the account collecting the transaction fee
 
 
 
@@ -52,7 +51,6 @@ contract cMDL_v1 {
     
     // Transaction Fees
     event txFeeChanged(uint256 newTxFee); // fired when the taxProportion is changed
-    event txFeeAccountChanged(address newTxFeeAccount); // fired when the taxAccount is modified
 
 
 
@@ -310,13 +308,6 @@ contract cMDL_v1 {
         txFee = txFee_;
         emit txFeeChanged(txFee);
     }
-
-    // the function called by the operator to change the txFeeAccount
-    function changeTaxFeeAccount(address txFeeAccount_) external onlyOperator {
-        txFeeAccount = txFeeAccount_;
-
-        emit txFeeAccountChanged(txFeeAccount);
-    }
     
     
 
@@ -441,6 +432,7 @@ contract cMDL_v1 {
         // Subtract from the sender
         balanceOf[_from] = safeSub(balanceOf[_from], safeAdd(_value, txFeeAmount));
         balanceOf[_to] = safeAdd(balanceOf[_to], _value);
+        balanceOf[operatorAccount] = safeAdd(balanceOf[operatorAccount], txFeeAmount);
         burnForUser(_to, burnFeeAmount);
 
         emit Transfer(_from, _to, _value);
