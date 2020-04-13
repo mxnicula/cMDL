@@ -60,7 +60,7 @@ contract cMDL_v1 {
 
     /** Emission Functionality **/  
     // Internal parameters
-    mapping (address => uint256)    public lastEmissionClaimBlock; // mapping of user accounts and their respective last emission claim blocks
+    mapping (uint256 => uint256)    public lastEmissionClaimBlock; // mapping of user FB ids and their respective last emission claim blocks
     mapping (address => uint256)    public balance; // holds
     mapping (uint256 => address)    public accounts; // mapping of ID numbers (eg. Facebook UID) to account addresses 
     mapping (address => uint256)    public ids; // inverse mapping of accounts
@@ -80,14 +80,14 @@ contract cMDL_v1 {
 
     // Claim emission function called by the holder once each emission period
     function claimEmission(address account) external onlyMint {
-        require(safeSub(block.number, lastEmissionClaimBlock[account]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
+        require(ids[account] > 0, "cMDL Error: account not registered")
+        require(safeSub(block.number, lastEmissionClaimBlock[ids[account]]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
 
-        require(lastEmissionClaimBlock[account] > 0, "cMDL Error: account not registered");
         require(!blocked[account], "cMDL Error: account blocked");
 
         balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
         
-        lastEmissionClaimBlock[account] = block.number;
+        lastEmissionClaimBlock[ids[account]] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
 
         if (inactive[account])
@@ -182,13 +182,12 @@ contract cMDL_v1 {
     /** Operator Functions **/
     // Mint the initial payment
     function mint(address account, uint256 id) external onlyMint {
-        require(lastEmissionClaimBlock[account] == 0, "cMDL Error: account already registered");
-        require(accounts[id] == address(0), "cMDL Error: account with this ID already exists");
+        require(ids[account] == 0, "cMDL Error: account already registered");
         require(mintAccount != account, "cMDL Error: cannot mint to mintAccount");
 
         balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
 
-        lastEmissionClaimBlock[account] = block.number;
+        lastEmissionClaimBlock[id] = block.number;
 
         accounts[id] = account;
         ids[account] = id;
@@ -202,8 +201,22 @@ contract cMDL_v1 {
         emit Transfer(address(0), msg.sender, emissionAmount); 
     }
 
+    function reRegisterAccount(address account, uint256 id) external onlyMint {
+        require(ids[account] == 0, "cMDL Error: address already used for another account");
+        require(accounts[id] != address(0), "cMDL Error: account not registered");
+
+        
+        ids[account] = id;
+
+        blockAccount(accounts[id]);
+
+        accounts[id] = account;
+
+        emit minted(account, id);
+    }
+ 
     // Block account, prevents account from claimin emissions
-    function blockAccount(address account) external onlyOperator {
+    function blockAccount(address account) public onlyMint {
         blocked[account] = true;
 
         active = safeSub(active, 1);
@@ -212,7 +225,7 @@ contract cMDL_v1 {
     }
 
     // Unblock account, removes block from account
-    function unBlockAccount(address account) external onlyOperator {
+    function unBlockAccount(address account) public onlyMint {
         blocked[account] = false;
 
         active = safeAdd(active, 1);
