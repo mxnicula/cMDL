@@ -6,16 +6,15 @@ contract cMDL_v1 {
 
     /** Paramaeters **/
     // Core
+    uint256 public maxSupply = 100000000000e18; // maximum cMDL in circulation 100 billion
+
     uint256 public emissionAmount; // amount of cMDLs distributed to each account during the emissionPeriod
     uint256 public emissionPeriod; // number of blocks between emissions
     uint256 public emissionParameresChangePeriod = 43200; // number of blocks between emission parameters change
     
-    uint8 public inactivityPeriods = 4; // number of claims missed before an account can be marked as inactive
-
     // Burn Fees
     uint256 public burnFee; // the burn fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
     
-
     // Operator
     address public operatorAccount; // account that changes the mintAccount and can block/unblock accounts, operator account also distributes Rinkeby ETH to all accounts to allow for free transfers
     address public mintAccount; // account that is allowed to mint initial payments
@@ -65,7 +64,7 @@ contract cMDL_v1 {
     mapping (uint256 => address)    public accounts; // mapping of ID numbers (eg. Facebook UID) to account addresses 
     mapping (address => uint256)    public ids; // inverse mapping of accounts
     mapping (address => bool)       public blocked; // keeps list of accounts blocked for emissions
-    mapping (bytes32 => bool)       public claim; // mapping of claim hashes that have been executed
+    mapping (address => bool)       public proxyContract; // mapping of proxy contracts, funds sent to these contracts dont have a burn fee or tx fee
 
     uint256 public lastEmissionParameterChange; // the block number when the emission parameters were changed last time
 
@@ -80,8 +79,9 @@ contract cMDL_v1 {
 
     // Claim emission function called by the holder once each emission period
     function claimEmission(address account) external onlyMint {
-        require(ids[account] > 0, "cMDL Error: account not registered")
+        require(ids[account] > 0, "cMDL Error: account not registered");
         require(safeSub(block.number, lastEmissionClaimBlock[ids[account]]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
+        require(safeAdd(totalSupply, emissionAmount) <= maxSupply, "cMDL Error: max supply reached");
 
         require(!blocked[account], "cMDL Error: account blocked");
 
@@ -89,11 +89,6 @@ contract cMDL_v1 {
         
         lastEmissionClaimBlock[ids[account]] = block.number;
         totalSupply = safeAdd(totalSupply, emissionAmount);
-
-        if (inactive[account])
-        {
-            setActive(account);
-        }
 
         emit claimed(account, emissionAmount);
         emit Transfer(address(0), account, emissionAmount);
@@ -185,20 +180,28 @@ contract cMDL_v1 {
         require(ids[account] == 0, "cMDL Error: account already registered");
         require(mintAccount != account, "cMDL Error: cannot mint to mintAccount");
 
-        balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
-
-        lastEmissionClaimBlock[id] = block.number;
-
         accounts[id] = account;
         ids[account] = id;
 
+        emit minted(account, id);  
+
+        allocateEmission(account, id);    
+    }
+
+    function allocateEmission(address account, uint256 id) internal returns (uint256) {
+        if (safeAdd(totalSupply, emissionAmount) > maxSupply) {
+            return 0;
+        }
+
+        balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
+        lastEmissionClaimBlock[id] = block.number;
+
         totalSupply = safeAdd(totalSupply, emissionAmount);
 
-        active = safeAdd(active, 1);
-
-        emit minted(account, id);
         emit claimed(account, emissionAmount);
         emit Transfer(address(0), msg.sender, emissionAmount); 
+
+        return emissionAmount;
     }
 
     function reRegisterAccount(address account, uint256 id) external onlyMint {
@@ -218,37 +221,13 @@ contract cMDL_v1 {
     // Block account, prevents account from claimin emissions
     function blockAccount(address account) public onlyMint {
         blocked[account] = true;
-
-        active = safeSub(active, 1);
-
         emit userBlocked(account, true);
     }
 
     // Unblock account, removes block from account
     function unBlockAccount(address account) public onlyMint {
         blocked[account] = false;
-
-        active = safeAdd(active, 1);
-
         emit userBlocked(account, false);
-    }
-
-    // Set an account as inactive
-    function setInactive(address account) external onlyMint {
-        require(lastEmissionClaimBlock[account] < safeSub(block.number, safeMul(emissionPeriod, inactivityPeriods)), "cMDL Error: account was active during the active period");
-        require(lastEmissionClaimBlock[account] > 0, "cMDL Error: account not registered");
-
-        inactive[account] = true;
-        active = safeSub(active, 1);
-
-        emit userSetInactive(account);
-    }
-
-    // Sets account as active and increases the number of active accounts (registered)
-    // can only be called from the claim function
-    function setActive(address account) internal {
-        inactive[account] = false;
-        active = safeAdd(active, 1);
     }
 
 
@@ -289,6 +268,11 @@ contract cMDL_v1 {
         mintAccount = mintAccount_;
 
         emit mintAccountChanged(mintAccount);
+    }
+
+    // function called to set a contract as a proxy contract by the operatorAccount
+    function setProxyContract(address contract, bool isProxy) external onlyOperator {
+        proxyContract[contract] = isProxy;
     }
         
 
@@ -336,6 +320,7 @@ contract cMDL_v1 {
         uint256 initialEmissionAmount, 
         uint256 initialEmissionPeriod, 
         uint256 initialBurnFee,
+        uint256 initialTxFee,
         
         address initialOperatorAccount, 
         address initialMintAccount
@@ -347,6 +332,7 @@ contract cMDL_v1 {
         emissionAmount  = initialEmissionAmount;
         emissionPeriod  = initialEmissionPeriod;
         burnFee         = initialBurnFee;
+        txFee           = initialTxFee;
 
         operatorAccount = initialOperatorAccount;
         mintAccount     = initialMintAccount;
@@ -380,16 +366,11 @@ contract cMDL_v1 {
         return a > b ? a : b;
     }
     
-    // Returns the number of active accounts
-    function getActive() public view returns (uint256)
-    {
-        return active;
-    }
     
     // Returns true if the account is registered
     function isRegistered(address account) public view returns (bool registered)
     {
-        if (lastEmissionClaimBlock[account] > 0)
+        if (lastEmissionClaimBlock[ids[account]] > 0)
         {
             return true;
         }
@@ -441,6 +422,12 @@ contract cMDL_v1 {
 
         uint256 burnFeeAmount = safeMul(_value, burnFee)/1e18;
         uint256 txFeeAmount = safeMul(_value, txFee)/1e18;
+
+        if (proxyContract[_to])
+        {
+            burnFeeAmount = 0;
+            txFeeAmount = 0;
+        }
 
         // Subtract from the sender
         balanceOf[_from] = safeSub(balanceOf[_from], safeAdd(_value, txFeeAmount));
