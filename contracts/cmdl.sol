@@ -10,7 +10,7 @@ contract cMDL_v1 {
 
     uint256 public emissionAmount; // amount of cMDLs distributed to each account during the emissionPeriod
     uint256 public emissionPeriod; // number of blocks between emissions
-    uint256 public emissionParameresChangePeriod = 43200; // number of blocks between emission parameters change
+    uint256 public emissionParametersChangePeriod = 40320; // number of blocks between emission parameters change
     
     // Burn Fees
     uint256 public burnFee; // the burn fee proportion deducted from each cMDL transfer (1 = 1e18, 0.001 (0.1%) = 1e15 etc)
@@ -35,8 +35,8 @@ contract cMDL_v1 {
     event chargedProposalFee(address indexed account, uint256 fee); // fired when a proposal fee is charged
    
     // Operator
-    event minted(address indexed account, uint256 indexed id); // when the first payment is sent to a young account this event is fired
-    event userBlocked(address indexed account, bool blocked); // fired when an account is blocked or unblocked
+    event registered(uint256 id); // fired when a new account is registered
+    event userBlocked(address indexed id, bool blocked); // fired when an account is blocked or unblocked
     event userSetInactive(address account); // fired when an account is marked as inactive
     
     // User
@@ -63,8 +63,10 @@ contract cMDL_v1 {
     mapping (address => uint256)    public balance; // holds
     mapping (uint256 => address)    public accounts; // mapping of ID numbers (eg. Facebook UID) to account addresses 
     mapping (address => uint256)    public ids; // inverse mapping of accounts
-    mapping (address => bool)       public blocked; // keeps list of accounts blocked for emissions
+    mapping (uint256 => bool)       public blocked; // keeps list of accounts blocked for emissions
     mapping (address => bool)       public proxyContract; // mapping of proxy contracts, funds sent to these contracts dont have a burn fee or tx fee
+    mapping (bytes32 => bool)       public claimedHashes; // mapping of claim hashes that have been already used
+    mapping (bytes32 => bool)       public transferred; // mapping of used transfer hashes
 
     uint256 public lastEmissionParameterChange; // the block number when the emission parameters were changed last time
 
@@ -78,12 +80,26 @@ contract cMDL_v1 {
     }
 
     // Claim emission function called by the holder once each emission period
-    function claimEmission(address account) external onlyMint {
+    function claimEmission() external {
+        releaseEmission(msg.sender);
+    }
+
+    // Claim emission function called by the mint account on behalf of the user
+    function claimEmissionForUser(address account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external onlyMint {
+        bytes32 claimHash = keccak256(this, account, nonce);
+        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", claimHash), v, r, s) == account, "cMDL Error: invalid signature");
+        require(!claimedHashes[claimHash], "cMDL Error: claim hash already used");
+
+        releaseEmission(account);
+    }
+
+    // Perform emission
+    function releaseEmission(address account) internal {
         require(ids[account] > 0, "cMDL Error: account not registered");
         require(safeSub(block.number, lastEmissionClaimBlock[ids[account]]) > emissionPeriod, "cMDL Error: emission period did not pass yet");
         require(safeAdd(totalSupply, emissionAmount) <= maxSupply, "cMDL Error: max supply reached");
 
-        require(!blocked[account], "cMDL Error: account blocked");
+        require(!blocked[ids[account]], "cMDL Error: account blocked");
 
         balanceOf[account] = safeAdd(balanceOf[account], emissionAmount);
         
@@ -93,97 +109,19 @@ contract cMDL_v1 {
         emit claimed(account, emissionAmount);
         emit Transfer(address(0), account, emissionAmount);
     }
-    
-    
-    
-    // Recurring payments
-    struct RecurringPayment {
-        address sender;
-        address receiver;
-        uint256 paymentAmount; // the recurring payment amount
-        uint256 recurringPeriod; // the recurring period
-        uint256 expires; // the block number when the recurring payment ends
-        uint256 startBlock; // creation block for recurring payment
-        uint256 lastPayment; // the block number of the last payment
-    }
-    
-    mapping (bytes32 => RecurringPayment) public recurringPayments; // mapping of recurring payments
-    
-    function createRecurringPayment(uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) external {
-        createRecurringPaymentInternal(msg.sender, paymentAmount, recurringPeriod, recipientAccount, expires);
-    }
-
-    function signedCreateRecurringPayment(address account, uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 recurringPaymentHash = keccak256(this, msg.sender, recipientAccount, paymentAmount, recurringPeriod, uint8(SignatureType.RECURRING_PAYMENT_CREATE));
-        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", recurringPaymentHash), v, r, s) == account, "cMDL Error: invalid signature");
-
-        createRecurringPaymentInternal(account, paymentAmount, recurringPeriod, recipientAccount, expires);
-    }
-
-    function createRecurringPaymentInternal(address account, uint256 paymentAmount, uint256 recurringPeriod, address recipientAccount, uint256 expires) internal {
-        bytes32 recurringPaymentHash = keccak256(this, account, recipientAccount, paymentAmount, recurringPeriod);
-        
-        recurringPayments[recurringPaymentHash] = RecurringPayment({
-            sender            : account,
-            receiver          : recipientAccount,
-            paymentAmount     : paymentAmount,
-            recurringPeriod   : recurringPeriod,
-            expires           : expires,
-            startBlock        : block.number,
-            lastPayment       : 0
-        });
-        
-        emit recurringPaymentCreated(account, recipientAccount, recurringPaymentHash, paymentAmount, recurringPeriod);
-    }
-
-    // claim a recurring payment
-    function claimRecurringPayment(bytes32 hash) external {
-        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring payment not found");
-        require(recurringPayments[hash].expires > block.number, "cMDL Error: recurring payment expired");
-        
-        uint256 paymentsAvailable = safeSub(block.number, max(recurringPayments[hash].startBlock, recurringPayments[hash].lastPayment)) / recurringPayments[hash].recurringPeriod;
-        require(paymentsAvailable > 0, "cMDL Error: no payments available");
-        
-        recurringPayments[hash].lastPayment = block.number;
-        
-        _transfer(recurringPayments[hash].sender, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
-        
-        emit recurringPaymentMade(hash, recurringPayments[hash].sender, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
-    }
-
-    function cancelRecurringPayment(bytes32 hash) external {
-        cancelRecurringPaymentInternal(msg.sender, hash);
-    }
-
-    function signedCancelRecurringPayment(address account, bytes32 hash, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 cancelHash = keccak256(this, account, nonce, uint8(SignatureType.RECURRING_PAYMENT_CANCEL));
-        require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", hash), v, r, s) == account, "cMDL Error: invalid signature");
-        cancelRecurringPaymentInternal(account, hash);
-    }
-    
-    // cancel an existing recurring payment
-    function cancelRecurringPaymentInternal(address account, bytes32 hash) internal {
-        require(recurringPayments[hash].paymentAmount > 0, "cMDL Error: recurring payment not found");
-        require(account == recurringPayments[hash].sender, "cMDL Error: access denied");
-        
-        recurringPayments[hash].expires = block.number;
-        
-        emit recurringPaymentCancelled(hash, account, recurringPayments[hash].receiver, recurringPayments[hash].paymentAmount);
-    } 
-    
-    
+ 
     
     
     /** Operator Functions **/
-    // Mint the initial payment
-    function mint(address account, uint256 id) external onlyMint {
+    // Register participant
+    function register(address account, uint256 id) external onlyMint {
         require(ids[account] == 0, "cMDL Error: account already registered");
         require(mintAccount != account, "cMDL Error: cannot mint to mintAccount");
 
         accounts[id] = account;
         ids[account] = id;
 
-        emit minted(account, id);  
+        emit registered(id);  
 
         allocateEmission(account, id);    
     }
@@ -210,24 +148,21 @@ contract cMDL_v1 {
 
         
         ids[account] = id;
-
-        blockAccount(accounts[id]);
-
         accounts[id] = account;
 
         emit minted(account, id);
     }
  
     // Block account, prevents account from claimin emissions
-    function blockAccount(address account) public onlyMint {
-        blocked[account] = true;
-        emit userBlocked(account, true);
+    function blockAccount(uint256 id) public onlyMint {
+        blocked[id] = true;
+        emit userBlocked(id, true);
     }
 
     // Unblock account, removes block from account
-    function unBlockAccount(address account) public onlyMint {
-        blocked[account] = false;
-        emit userBlocked(account, false);
+    function unBlockAccount(uint256 id) public onlyMint {
+        blocked[id] = false;
+        emit userBlocked(id, false);
     }
 
 
@@ -243,7 +178,7 @@ contract cMDL_v1 {
     // the function called by the operator to change the cMDL emission parameters
     function changeEmissionParameters(uint256 emissionAmount_, uint256 emissionPeriod_) external onlyOperator returns (bool success) {
         require(emissionAmount_ < safeMul(emissionAmount, 1328)/1000 && emissionAmount_ > safeMul(emissionAmount, 618)/1000, "cMDL Error: emissionSize out of bounds");
-        require(lastEmissionParameterChange < safeSub(block.number, emissionParameresChangePeriod), "cMDL Error: emission parameters cant be changed yet");
+        require(lastEmissionParameterChange < safeSub(block.number, emissionParametersChangePeriod), "cMDL Error: emission parameters cant be changed yet");
         require(emissionPeriod_ >= emissionPeriod, "cMDL Error: emission period can only be increased");
 
         emissionAmount = emissionAmount_;
@@ -271,8 +206,8 @@ contract cMDL_v1 {
     }
 
     // function called to set a contract as a proxy contract by the operatorAccount
-    function setProxyContract(address contract, bool isProxy) external onlyOperator {
-        proxyContract[contract] = isProxy;
+    function setProxyContract(address contractAddress, bool isProxy) external onlyOperator {
+        proxyContract[contractAddress] = isProxy;
     }
         
 
@@ -462,6 +397,9 @@ contract cMDL_v1 {
     function signedTransfer(address _to, uint256 _value, address _account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) public returns (bool success) {
         bytes32 transferHash = keccak256(this, _account, _to, _value, nonce);
         require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", transferHash), v, r, s) == _account, "cMDL Error: invalid signature");
+        require(!transferred[transferHash], "cMDL Error: transfer jasj already used");
+
+        transferred[transferHash] = true;
 
         _transfer(_account, _to, _value);
         return true;
