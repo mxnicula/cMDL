@@ -35,15 +35,12 @@ contract cMDL_v1 {
     event chargedProposalFee(address indexed account, uint256 fee); // fired when a proposal fee is charged
    
     // Operator
-    event registered(uint256 id); // fired when a new account is registered
-    event userBlocked(address indexed id, bool blocked); // fired when an account is blocked or unblocked
+    event registered(uint256 indexed id, address account); // fired when a new account is registered
+    event userBlocked(uint256 indexed id, bool blocked); // fired when an account is blocked or unblocked
     event userSetInactive(address account); // fired when an account is marked as inactive
     
     // User
     event claimed(address indexed account, uint256 amount); // fired on each emission claim performed by user
-    event recurringPaymentCreated(address indexed _from, address indexed recipientAccount,  bytes32 recurringPaymentHash, uint256 paymentAmount, uint256 paymentPeriod); // fired when a recurring payment is created
-    event recurringPaymentMade(bytes32 indexed hash, address indexed sender, address indexed receiver, uint256 paymentAmount);
-    event recurringPaymentCancelled(bytes32 indexed hash, address indexed sender, address indexed receiver, uint256 paymentAmount);
 
     // Burn fee
     event burnFeeChanged(uint256 newBurnFee); // fired when the burnFee is changed
@@ -121,7 +118,7 @@ contract cMDL_v1 {
         accounts[id] = account;
         ids[account] = id;
 
-        emit registered(id);  
+        emit registered(id, account);  
 
         allocateEmission(account, id);    
     }
@@ -137,7 +134,7 @@ contract cMDL_v1 {
         totalSupply = safeAdd(totalSupply, emissionAmount);
 
         emit claimed(account, emissionAmount);
-        emit Transfer(address(0), msg.sender, emissionAmount); 
+        emit Transfer(address(0), account, emissionAmount); 
 
         return emissionAmount;
     }
@@ -150,7 +147,7 @@ contract cMDL_v1 {
         ids[account] = id;
         accounts[id] = account;
 
-        emit minted(account, id);
+        emit registered(id, account);
     }
  
     // Block account, prevents account from claimin emissions
@@ -397,7 +394,7 @@ contract cMDL_v1 {
     function signedTransfer(address _to, uint256 _value, address _account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) public returns (bool success) {
         bytes32 transferHash = keccak256(this, _account, _to, _value, nonce);
         require(ecrecover(keccak256("\x19Ethereum Signed Message:\n32", transferHash), v, r, s) == _account, "cMDL Error: invalid signature");
-        require(!transferred[transferHash], "cMDL Error: transfer jasj already used");
+        require(!transferred[transferHash], "cMDL Error: transfer hash already used");
 
         transferred[transferHash] = true;
 
