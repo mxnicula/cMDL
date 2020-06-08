@@ -77,9 +77,9 @@ contract cMDL_v1 {
     }
 
     // Claim emission function called by the holder once each emission period
-    function claimEmission() external {
-        releaseEmission(msg.sender);
-    }
+    // function claimEmission() external {
+    //     releaseEmission(msg.sender);
+    // }
 
     // Claim emission function called by the mint account on behalf of the user
     function claimEmissionForUser(address account, uint256 nonce, uint8 v, bytes32 r, bytes32 s) external onlyMint {
